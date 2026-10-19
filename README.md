@@ -1,5 +1,7 @@
 # Eisenhower Matrix
 
+**Live:** https://matrix.dreadnought.group
+
 A simple, keyboard-first web app for sorting tasks into the Eisenhower Matrix:
 Do, Schedule, Delegate, Delete.
 
@@ -24,4 +26,4 @@ The build plan is in [`docs/plans/v1.md`](docs/plans/v1.md).
 
 ## Deploying
 
-Every push to `main` deploys to Cloudflare Pages (project `eisenhower-matrix`), but only after the full CI job passes. The deployed files are the exact build that was tested. The repo needs two Actions secrets: `CLOUDFLARE_API_TOKEN` (an API token with the Account › Cloudflare Pages › Edit permission) and `CLOUDFLARE_ACCOUNT_ID`.
+Every push to `main` deploys to Cloudflare Pages (project `eisenhower-matrix`, served at https://matrix.dreadnought.group and https://eisenhower-matrix-6ij.pages.dev), but only after the full CI job passes. The deployed files are the exact build that was tested. The repo needs two Actions secrets: `CLOUDFLARE_API_TOKEN` (an API token with the Account › Cloudflare Pages › Edit permission) and `CLOUDFLARE_ACCOUNT_ID`.
