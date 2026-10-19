@@ -62,6 +62,9 @@ export type App = {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** The quadrants whose rows have a date or Who? field, and which. */
+const FIELD_OF: Partial<Record<Quadrant, FieldError['field']>> = { schedule: 'when', delegate: 'who' };
+
 export const UPDATED_ELSEWHERE = 'Updated from another tab';
 export const NOT_SAVED_CONFLICT = "Changed in another tab, so this wasn't saved. Try again.";
 
@@ -243,7 +246,10 @@ export function createApp({
     }
     renderedToday = today();
     renderStale = false;
-    for (const id of fieldErrors.keys()) if (!taskOf(id)) fieldErrors.delete(id);
+    for (const [id, error] of fieldErrors) {
+      const t = taskOf(id); // gone, or moved to a quadrant without that field: the error is stale
+      if (!t || FIELD_OF[quadrantOf(t)] !== error.field) fieldErrors.delete(id);
+    }
     renderBoard(shell, state.tasks, { tabStops, editing, today: renderedToday, fieldErrors });
     updateBackupStatus();
     if (spot) restoreFocus(spot);
@@ -446,7 +452,11 @@ export function createApp({
     else fieldErrors.set(id, { field: isWhen ? 'when' : 'who', text: result.error });
     // The row on screen now: a refused-as-stale save has rebuilt it.
     const message = findRow(id)?.querySelector('.task__field-error');
-    if (message) message.textContent = result.ok ? '' : result.error;
+    if (message) {
+      // Announced once, here; the rows each render rebuilds show it without an alert role.
+      if (!result.ok) message.setAttribute('role', 'alert');
+      message.textContent = result.ok ? '' : result.error;
+    }
     // Only when it differs: writing a date input, even with its own value, wipes the parts of
     // a date the user is part-way through retyping (Chrome reports those as '').
     const shown = (isWhen ? saved.when : saved.who) ?? '';

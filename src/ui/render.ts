@@ -213,22 +213,24 @@ export function refreshStamps(li: HTMLElement, task: Task, today: string): void 
   slot.replaceChildren(...buildStamps(task, today, isNext));
 }
 
-/**
- * Each control in a row carries `data-control`, unique within the row and the same on every
- * render, so focus can be put back on a rebuilt row's matching control (#12).
- */
 /** Unique ids for the field errors, so each field's aria-describedby names its own. */
 let fieldErrorSeq = 0;
 
-/** The message element for a date or Who? field, tied to it by aria-describedby. */
+/**
+ * The message element for a date or Who? field, tied to it by aria-describedby. No alert role:
+ * a rebuilt alert re-announces on every render; the app gives it one when it rejects a value.
+ */
 function fieldErrorFor(field: HTMLInputElement, text: string): HTMLElement {
   const msg = el('span', 'task__field-error', text);
   msg.id = `task-field-error-${++fieldErrorSeq}`;
-  msg.setAttribute('role', 'alert');
   field.setAttribute('aria-describedby', msg.id);
   return msg;
 }
 
+/**
+ * Each control in a row carries `data-control`, unique within the row and the same on every
+ * render, so focus can be put back on a rebuilt row's matching control (#12).
+ */
 function renderTask(
   task: Task,
   tabStop: boolean,

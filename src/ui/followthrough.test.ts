@@ -373,6 +373,33 @@ describe('Delegate and Do follow-through (AC10)', () => {
     expect(message().textContent).toBe('');
   });
 
+  it('drops the error once its field leaves the row, so a move back does not bring it back', () => {
+    boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
+    setField(row('g').querySelector<HTMLInputElement>('.task__who')!, 'x'.repeat(81));
+    key(row('g'), '1'); // to Do: no Who? field
+    key(row('g'), '3'); // back to Delegate
+    expect(titles('delegate')).toEqual(['Send quote']);
+    expect(fieldError('g').textContent).toBe('');
+  });
+
+  it('announces the error once, not again on every re-render', () => {
+    boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
+    setField(row('g').querySelector<HTMLInputElement>('.task__who')!, 'x'.repeat(81));
+    expect(fieldError('g').getAttribute('role')).toBe('alert');
+    app!.render();
+    expect(fieldError('g').textContent).toBe(WHO_TOO_LONG); // still shown
+    expect(fieldError('g').getAttribute('role')).toBeNull(); // but a rebuilt alert would re-announce
+  });
+
+  it('shows no error on a task deleted and brought back by undo', () => {
+    boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
+    setField(row('g').querySelector<HTMLInputElement>('.task__who')!, 'x'.repeat(81));
+    app!.deleteTask('g');
+    app!.undo();
+    expect(titles('delegate')).toEqual(['Send quote']);
+    expect(fieldError('g').textContent).toBe('');
+  });
+
   it('gives every date and Who? field its own error element, and none to other rows', () => {
     boot([task('g', 'Send quote', true, false), task('s', 'Pay rent', false, true), task('d', 'Fire', true, true)]);
     const ids = [fieldError('g').id, fieldError('s').id];
