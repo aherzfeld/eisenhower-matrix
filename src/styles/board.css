@@ -1,0 +1,506 @@
+/* The board: a printed 2×2 chart with axis labels on its edges, four inked quadrants, task rows, stamps. */
+
+.board {
+  grid-row: 2;
+  grid-column: 1;
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr) minmax(0, 1fr);
+  /* Indefinite height, so both 1fr rows take the taller row's height: the matrix stays square-cornered. */
+  grid-template-rows: auto minmax(15rem, 1fr) minmax(15rem, 1fr);
+  gap: var(--gutter);
+  margin-top: 2rem;
+}
+
+/* ---- axes: mono labels set along the edges like a chart, with a ruled extent ---- */
+
+.axis {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--ink);
+  font: 500 var(--t-xs) / 1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.axis::before,
+.axis::after {
+  content: '';
+  flex: 1;
+}
+
+.axis--col {
+  margin-bottom: calc(var(--gutter) * -0.5);
+}
+
+.axis--col::before {
+  height: 7px;
+  background:
+    linear-gradient(var(--ink), var(--ink)) left center / 1.5px 100% no-repeat,
+    linear-gradient(var(--ink), var(--ink)) center / 100% 1.5px no-repeat;
+}
+
+.axis--col::after {
+  height: 7px;
+  background:
+    linear-gradient(var(--ink), var(--ink)) right center / 1.5px 100% no-repeat,
+    linear-gradient(var(--ink), var(--ink)) center / 100% 1.5px no-repeat;
+}
+
+.axis--row {
+  margin-right: calc(var(--gutter) * -0.5);
+  /* Read bottom to top, as on a chart's y-axis. */
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+.axis--row::before {
+  width: 7px;
+  background:
+    linear-gradient(var(--ink), var(--ink)) center top / 100% 1.5px no-repeat,
+    linear-gradient(var(--ink), var(--ink)) center / 1.5px 100% no-repeat;
+}
+
+.axis--row::after {
+  width: 7px;
+  background:
+    linear-gradient(var(--ink), var(--ink)) center bottom / 100% 1.5px no-repeat,
+    linear-gradient(var(--ink), var(--ink)) center / 1.5px 100% no-repeat;
+}
+
+.axis--urgent { grid-area: 1 / 2; }
+.axis--not-urgent { grid-area: 1 / 3; }
+.axis--important { grid-area: 2 / 1; }
+.axis--not-important { grid-area: 3 / 1; }
+
+/* ---- quadrants ---- */
+
+.q--do { --q-ink: var(--do); --q-tint: var(--do-tint); --q-on: var(--on-band); grid-area: 2 / 2; }
+.q--schedule { --q-ink: var(--schedule); --q-tint: var(--schedule-tint); --q-on: var(--on-schedule); grid-area: 2 / 3; }
+.q--delegate { --q-ink: var(--delegate); --q-tint: var(--delegate-tint); --q-on: var(--on-band); grid-area: 3 / 2; }
+.q--delete { --q-ink: var(--delete); --q-tint: var(--delete-tint); --q-on: var(--on-band); grid-area: 3 / 3; }
+
+.q {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--q-tint);
+  container-type: inline-size;
+}
+
+/* Halftone: a dot screen of the band ink at 18%, behind the list, never under text at full strength. */
+.q::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(var(--q-ink) 0.6px, transparent 0.8px) 0 0 / 6px 6px;
+  opacity: 0.18;
+  pointer-events: none;
+}
+
+.q__band {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'key name count'
+    '. axes axes';
+  align-items: center;
+  column-gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  background: var(--q-ink);
+  color: var(--q-on);
+}
+
+.q__key {
+  grid-area: key;
+}
+
+.q__name {
+  grid-area: name;
+  margin: 0;
+  font: 800 var(--t-xl) / 1 var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+.q__count {
+  grid-area: count;
+  font: 500 var(--t-lg) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Below 640px only, where the axes are hidden: the band carries its own axis pair. */
+.q__axes {
+  grid-area: axes;
+  display: none;
+  margin-top: 0.375rem;
+  font: 500 var(--t-xs) / 1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.q__verb {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0.875rem 1rem 0.375rem;
+  font: 500 var(--t-xs) / 1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.q__verb::after {
+  content: '';
+  flex: 1;
+  height: 1.5px;
+  background: var(--ink);
+}
+
+.q__list {
+  flex: 1;
+  margin: 0;
+  padding: 0.25rem 0.5rem 0.75rem;
+  list-style: none;
+}
+
+/* Empty quadrants say what belongs there. */
+.q__list:empty::before {
+  display: block;
+  padding: 0.5rem;
+  color: var(--ink-muted);
+  font: 400 var(--t-xs) / 1.5 var(--font-mono);
+}
+.q--do .q__list:empty::before { content: 'Nothing urgent and important. Good.'; }
+.q--schedule .q__list:empty::before { content: 'Nothing planned. Important work that can wait goes here, with a date.'; }
+.q--delegate .q__list:empty::before { content: 'Nothing to hand off. Urgent, but not yours to do.'; }
+.q--delete .q__list:empty::before { content: 'Nothing to let go of. Park distractions here, then drop them.'; }
+
+.q__footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 0.75rem 0.5rem;
+}
+
+.q__footer:not(:has(> :not([hidden]))) {
+  display: none;
+}
+
+/* ---- task rows ---- */
+
+.task {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: 0.625rem;
+  row-gap: 0.375rem;
+  padding: 0.625rem 0.5rem 0.625rem 2.375rem;
+  border-top: 1px solid var(--rule);
+}
+
+.task:first-child {
+  border-top-color: transparent;
+}
+
+.task:focus {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  z-index: 1;
+}
+
+.task__check {
+  position: absolute;
+  top: calc(0.625rem + 0.3125rem);
+  left: 0.625rem;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  appearance: none;
+  border: 1.5px solid var(--ink);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.task__check:hover {
+  box-shadow: inset 0 0 0 3px var(--q-tint), inset 0 0 0 9px var(--q-ink);
+}
+
+.task__check:checked {
+  background: var(--q-ink);
+  box-shadow: none;
+}
+
+.task__title {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding-block: 0.175rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.task:has(.stamp--next) .task__title {
+  font-weight: 650;
+}
+
+.task[data-done='true'] .task__title {
+  color: var(--ink-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--q-ink);
+  text-decoration-thickness: 1.5px;
+}
+
+.task__edit {
+  flex: 1 1 12rem;
+  min-width: 0;
+  height: 1.75rem;
+  padding: 0 0.375rem;
+  border: 0;
+  border-bottom: 2px solid var(--ink);
+  border-radius: 0;
+  background: var(--sheet);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.task__error {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font: 500 var(--t-xs) / 1.4 var(--font-mono);
+}
+
+.task__error:empty {
+  display: none;
+}
+
+.task__stamps {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  min-height: 1.75rem;
+}
+
+.task__stamps:empty {
+  display: none;
+}
+
+/* ---- stamps: mono labels in a ruled box, rotated as if inked by hand ---- */
+
+.stamp {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.25rem 0.375rem 0.2rem;
+  border: 1.5px solid var(--ink);
+  color: var(--ink);
+  font: 500 var(--t-xs) / 1.2 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+  transform: rotate(-2deg);
+}
+
+/* On a band ink, the text follows the band rule (#1B2340, or #FAFAF7 on Schedule blue). */
+.stamp--next {
+  background: var(--do);
+  color: var(--on-band);
+}
+
+.stamp--due {
+  background: var(--schedule);
+  color: var(--on-schedule);
+}
+
+.task__promote {
+  padding: 0.3rem 0.5rem 0.25rem;
+  border: 1.5px solid var(--ink);
+  background: var(--do);
+  color: var(--on-band);
+  font: 500 var(--t-xs) / 1.2 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow: 0 1.5px 0 var(--ink);
+}
+
+.task__promote:hover {
+  background: var(--ink);
+  color: var(--sheet);
+}
+
+/* ---- inline extras: the Schedule date and the Delegate "Who?" ---- */
+
+.task__when,
+.task__who {
+  margin-left: auto;
+  height: 1.75rem;
+  padding: 0 0.25rem;
+  border: 0;
+  border-bottom: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 400 var(--t-xs) / 1 var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+.task__who {
+  width: 7.5rem;
+}
+
+/* Where supported, the Who? field is as wide as the name in it. */
+@supports (field-sizing: content) {
+  .task__who {
+    field-sizing: content;
+    width: auto;
+    min-width: 4.5rem;
+    max-width: 12rem;
+  }
+}
+
+.task__who::placeholder {
+  color: var(--ink-muted);
+  opacity: 1;
+}
+
+.task__when::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+}
+
+/* ---- row actions: keycaps clipped to the row's top edge, on hover or focus only ---- */
+
+.task__rename,
+.task__delete,
+.task__move {
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+}
+
+.task__rename,
+.task__moves,
+.task__delete {
+  position: absolute;
+  top: -0.8rem;
+  z-index: 2;
+  display: flex;
+  gap: 0.25rem;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.task__delete { right: 0.5rem; }
+.task__moves { right: 2.625rem; }
+.task__rename { right: 10.125rem; }
+
+.task:hover :is(.task__rename, .task__moves, .task__delete),
+.task:focus-within :is(.task__rename, .task__moves, .task__delete) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+:is(.task__rename, .task__move, .task__delete) .key {
+  min-width: 1.625rem;
+  height: 1.5rem;
+  border-color: var(--ink);
+  background: var(--sheet);
+  box-shadow: 0 1.5px 0 var(--ink);
+}
+
+.task__move[data-move='do'] .key { background: var(--do); color: var(--on-band); }
+.task__move[data-move='schedule'] .key { background: var(--schedule); color: var(--on-schedule); }
+.task__move[data-move='delegate'] .key { background: var(--delegate); color: var(--on-band); }
+.task__move[data-move='delete'] .key { background: var(--delete); color: var(--on-band); }
+
+:is(.task__rename, .task__move, .task__delete):hover .key {
+  box-shadow: 0 0 0 1.5px var(--ink);
+}
+
+/* The key for the quadrant the task is already in does nothing; it reads as spent. */
+.q--do .task__move[data-move='do'],
+.q--schedule .task__move[data-move='schedule'],
+.q--delegate .task__move[data-move='delegate'],
+.q--delete .task__move[data-move='delete'] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* No hover on touch screens: the actions sit in the row instead. */
+@media (hover: none) {
+  .task__rename,
+  .task__moves,
+  .task__delete {
+    position: static;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* A zero-height line break, so the actions get a line of their own, set to the right. */
+  .task::after {
+    content: '';
+    flex-basis: 100%;
+    order: 1;
+  }
+
+  .task__rename,
+  .task__moves,
+  .task__delete {
+    order: 2;
+  }
+
+  .task__rename {
+    margin-left: auto;
+  }
+
+  .task__moves {
+    margin-inline: 0.25rem;
+  }
+}
+
+/* Narrow quadrant: extras start under the title rather than hanging off the right edge. */
+@container (max-width: 22rem) {
+  .task__when,
+  .task__who {
+    margin-left: 0;
+  }
+}
+
+/* ---- below 640px: the axes hide, quadrants stack, each band shows its axis pair ---- */
+
+@media (max-width: 639.98px) {
+  :root {
+    --gutter: 1rem;
+  }
+
+  .board {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    margin-top: 1.5rem;
+  }
+
+  .axis {
+    display: none;
+  }
+
+  .q {
+    grid-area: auto;
+    min-height: 0;
+  }
+
+  .q__axes {
+    display: block;
+  }
+
+  .q__list {
+    min-height: 3.5rem;
+  }
+}

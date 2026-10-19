@@ -1,0 +1,55 @@
+/*
+ * One orchestrated moment: a row that lands prints in, its band-ink plate 3px out of register
+ * and settling to 0 over 220 ms. The mini-matrix lighting (chrome.css) is the only other motion.
+ */
+
+.task.is-new {
+  animation: print-in 220ms var(--ease-register) both;
+}
+
+.task.is-new .task__title {
+  animation: print-in-text 220ms var(--ease-register) both;
+}
+
+@keyframes print-in {
+  from {
+    transform: translate(-3px, -3px);
+    box-shadow: 3px 3px 0 var(--q-ink);
+    background-color: var(--sheet);
+  }
+  to {
+    transform: none;
+    box-shadow: 0 0 0 var(--q-ink);
+    background-color: transparent;
+  }
+}
+
+@keyframes print-in-text {
+  from { text-shadow: 3px 3px 0 var(--q-ink); }
+  to { text-shadow: 0 0 0 var(--q-ink); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task.is-new,
+  .task.is-new .task__title {
+    animation: none;
+  }
+
+  .mini__sq {
+    transition: none;
+  }
+
+  /* The slip still holds the destination for 250 ms; it just doesn't slide or fade. */
+  .prompt {
+    transition-duration: 0s;
+  }
+
+  .prompt[data-active='false'] {
+    transform: none;
+  }
+
+  /* The countdown still counts, in five steps instead of a glide. */
+  .toast__bar {
+    animation-timing-function: steps(5, end);
+  }
+}

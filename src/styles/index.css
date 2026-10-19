@@ -5,3 +5,7 @@
 @import '@fontsource/ibm-plex-mono/500.css';
 
 @import './tokens.css';
+@import './base.css';
+@import './chrome.css';
+@import './board.css';
+@import './motion.css';

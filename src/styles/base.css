@@ -1,0 +1,129 @@
+/* Page, paper grain, type defaults, focus, key chips and the shared text-button look. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* The app shows and hides parts with the hidden attribute; no display rule below may undo it. */
+[hidden] {
+  display: none !important;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 var(--t-md) / 1.4 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Paper grain: one feTurbulence noise, over everything so the inks print on the stock too. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  background-size: 240px 240px;
+}
+
+@media (prefers-color-scheme: dark) {
+  body::before {
+    mix-blend-mode: screen;
+  }
+}
+
+#app {
+  max-width: 76rem;
+  margin: 0 auto;
+  padding: 0 var(--gutter) 7rem;
+}
+
+::selection {
+  background: var(--delegate);
+  color: var(--on-band);
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* Visible focus everywhere: one ink ring, 2px out. */
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* Key chips: a flat keycap, drawn in whatever colour surrounds it. Always aria-hidden. */
+.key {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 0.3rem;
+  font: 500 var(--t-xs) / 1 var(--font-mono);
+  border: 1.5px solid currentColor;
+  border-radius: 4px;
+  box-shadow: 0 1.5px 0 currentColor;
+  white-space: nowrap;
+}
+
+/* Text buttons: mono, uppercase, underlined; the underline takes the Do ink on hover. */
+.q__drop,
+.clear-done,
+.banner__download,
+.transfer__export,
+.transfer__import,
+.import-confirm__cancel {
+  padding: 0.5rem 0.25rem;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: 500 var(--t-xs) / 1.2 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.3em;
+}
+
+:is(.q__drop, .clear-done, .banner__download, .transfer__export, .transfer__import, .import-confirm__cancel):hover {
+  text-decoration-color: var(--do);
+  text-decoration-thickness: 3px;
+}
+
+/* A small circled "!" for errors: the only use of --danger besides the banner rule. */
+.capture__message::before,
+.task__error::before,
+.import-confirm__error::before,
+.banner::before {
+  content: '!' / '';
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  border: 1.5px solid var(--danger);
+  border-radius: 50%;
+  color: var(--danger);
+  font: 500 var(--t-xs) / 1 var(--font-mono);
+  letter-spacing: 0;
+}
