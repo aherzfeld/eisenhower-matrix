@@ -599,37 +599,39 @@ describe('writeBackup (pre-import backup, T11)', () => {
 describe('preImportBackupsToPrune (#11)', () => {
   const PRE = 'eisenhower:backup:pre-import:';
   const at = (minute: number, suffix = '') => `${PRE}2026-10-19T12:${String(minute).padStart(2, '0')}:00.000Z${suffix}`;
+  /** A clock past every key here, so none of them is future-dated. */
+  const LATER = Date.parse('2026-10-19T13:00:00.000Z');
 
   it('keeps the newest, counting the one just written, and returns the rest', () => {
     const keys = [at(1), at(2), at(3), at(4), at(5)];
-    expect(preImportBackupsToPrune(keys, at(5), 3).sort()).toEqual([at(1), at(2)]);
+    expect(preImportBackupsToPrune(keys, at(5), 3, LATER).sort()).toEqual([at(1), at(2)]);
   });
 
   it('orders by the parsed timestamp, never by the order the keys arrive in', () => {
     const keys = [at(4), at(1), at(5), at(3), at(2)];
-    expect(preImportBackupsToPrune(keys, at(5), 3).sort()).toEqual([at(1), at(2)]);
-    expect(preImportBackupsToPrune([...keys].reverse(), at(5), 3).sort()).toEqual([at(1), at(2)]);
+    expect(preImportBackupsToPrune(keys, at(5), 3, LATER).sort()).toEqual([at(1), at(2)]);
+    expect(preImportBackupsToPrune([...keys].reverse(), at(5), 3, LATER).sort()).toEqual([at(1), at(2)]);
   });
 
   it('orders the same timestamp by its -N suffix, numerically', () => {
     const keys = [at(0, '-10'), at(0, '-2'), at(0), at(0, '-1'), at(0, '-11')];
-    expect(preImportBackupsToPrune(keys, at(0, '-11'), 3).sort()).toEqual([at(0), at(0, '-1')]);
+    expect(preImportBackupsToPrune(keys, at(0, '-11'), 3, LATER).sort()).toEqual([at(0), at(0, '-1')]);
     // Two backups with the same timestamp: the suffixed one is newer.
-    expect(preImportBackupsToPrune([at(0, '-1'), at(0)], at(0, '-1'), 1)).toEqual([at(0)]);
+    expect(preImportBackupsToPrune([at(0, '-1'), at(0)], at(0, '-1'), 1, LATER)).toEqual([at(0)]);
     // A later timestamp beats any suffix.
-    expect(preImportBackupsToPrune([at(1), at(0, '-9')], at(1), 1)).toEqual([at(0, '-9')]);
+    expect(preImportBackupsToPrune([at(1), at(0, '-9')], at(1), 1, LATER)).toEqual([at(0, '-9')]);
     // Where text order and number order disagree (-9 > -10 as text), number order wins.
-    expect(preImportBackupsToPrune([at(0, '-9'), at(0, '-10'), at(0, '-11')], at(0, '-11'), 2)).toEqual([at(0, '-9')]);
+    expect(preImportBackupsToPrune([at(0, '-9'), at(0, '-10'), at(0, '-11')], at(0, '-11'), 2, LATER)).toEqual([at(0, '-9')]);
   });
 
   it('never selects the key just written, even when its timestamp is the oldest (clock moved back)', () => {
     const keys = [at(1), at(2), at(3), at(4), at(0)];
-    expect(preImportBackupsToPrune(keys, at(0), 3).sort()).toEqual([at(1), at(2)]);
+    expect(preImportBackupsToPrune(keys, at(0), 3, LATER).sort()).toEqual([at(1), at(2)]);
   });
 
   it('returns nothing while there are no more than `keep` backups', () => {
-    expect(preImportBackupsToPrune([at(1), at(2), at(3)], at(3), 3)).toEqual([]);
-    expect(preImportBackupsToPrune([at(1)], at(1), 3)).toEqual([]);
+    expect(preImportBackupsToPrune([at(1), at(2), at(3)], at(3), 3, LATER)).toEqual([]);
+    expect(preImportBackupsToPrune([at(1)], at(1), 3, LATER)).toEqual([]);
   });
 
   it('only ever selects keys that parse exactly as a pre-import backup', () => {
@@ -661,8 +663,69 @@ describe('preImportBackupsToPrune (#11)', () => {
       `${PRE.toUpperCase()}2026-10-19T11:00:00.000Z`,
     ];
     const old = [at(1), at(2, '-1')];
-    expect(preImportBackupsToPrune([...others, ...old, at(9)], at(9), 1).sort()).toEqual(old.sort());
-    expect(preImportBackupsToPrune(others, at(9), 1)).toEqual([]);
+    expect(preImportBackupsToPrune([...others, ...old, at(9)], at(9), 1, LATER).sort()).toEqual(old.sort());
+    expect(preImportBackupsToPrune(others, at(9), 1, LATER)).toEqual([]);
+  });
+
+  describe('future-dated keys (#18)', () => {
+    const ms = (minute: number) => Date.parse(`2026-10-19T12:${String(minute).padStart(2, '0')}:00.000Z`);
+
+    it('order after every present-day key, so they are pruned first', () => {
+      // The issue's first import: f1..f3 stamped an hour ahead, then the clock went back.
+      const f = (i: number) => `${PRE}2026-10-19T13:00:00.00${i}Z`;
+      expect(preImportBackupsToPrune([f(1), f(2), f(3), at(0)], at(0), 3, ms(0))).toEqual([f(1)]);
+      expect(preImportBackupsToPrune([f(2), f(3), at(0), at(0, '-1')], at(0, '-1'), 3, ms(0))).toEqual([f(2)]);
+      // Present-day keys are kept ahead of a future-dated one even when they are older.
+      expect(preImportBackupsToPrune([f(3), at(1), at(2), at(3)], at(3), 3, ms(3))).toEqual([f(3)]);
+    });
+
+    it('with no future-dated keys, the clock makes no difference', () => {
+      const keys = [at(4), at(1), at(5), at(3, '-1'), at(3), at(2)];
+      const expected = [at(1), at(2), at(3)];
+      for (const now of [ms(5), ms(6), LATER, Number.MAX_SAFE_INTEGER]) {
+        expect(preImportBackupsToPrune(keys, at(5), 3, now).sort(), String(now)).toEqual(expected);
+      }
+    });
+
+    it('a key stamped exactly at now is present-day', () => {
+      // If at(2) counted as future-dated it would order below at(1), and at(1) would be kept.
+      const keys = [at(3), at(1), at(2), at(2, '-1')];
+      expect(preImportBackupsToPrune(keys, at(2, '-1'), 2, ms(2)).sort()).toEqual([at(1), at(3)]);
+    });
+
+    it('never selects the key just written, even when now is earlier than every other key', () => {
+      const early = `${PRE}2026-10-19T11:00:00.000Z`;
+      const keys = [at(1), early, at(4), at(2), at(3)];
+      expect(preImportBackupsToPrune(keys, early, 3, Date.parse('2026-10-19T11:00:00.000Z')).sort()).toEqual([at(1), at(2)]);
+      expect(preImportBackupsToPrune(keys, early, 1, Date.parse('2026-10-19T11:00:00.000Z')).sort()).toEqual(
+        [at(1), at(2), at(3), at(4)],
+      );
+      // Not even when the key just written is itself ahead of now.
+      expect(preImportBackupsToPrune(keys, at(1), 1, ms(0)).sort()).toEqual([early, at(2), at(3), at(4)]);
+    });
+
+    it('orders present-day keys newest first, then future-dated ones by timestamp, each by -N', () => {
+      const newestFirst = [
+        // present-day (now is 12:05), newest first
+        at(5, '-2'),
+        at(5),
+        at(3, '-10'),
+        at(3, '-9'),
+        at(3),
+        // future-dated, later timestamp first
+        at(7, '-10'),
+        at(7, '-9'),
+        at(6, '-1'),
+        at(6),
+      ];
+      const justWritten = at(5, '-3');
+      const shuffled = [at(6), at(3, '-9'), at(7, '-9'), at(5), justWritten, at(3), at(7, '-10'), at(5, '-2'), at(6, '-1'), at(3, '-10')];
+      for (let keep = 1; keep <= newestFirst.length + 1; keep++) {
+        expect(preImportBackupsToPrune(shuffled, justWritten, keep, ms(5)).sort(), `keep ${keep}`).toEqual(
+          newestFirst.slice(keep - 1).sort(),
+        );
+      }
+    });
   });
 });
 
@@ -681,7 +744,7 @@ describe('pre-import backup retention in writeBackup (#11)', () => {
     let t = NOW;
     const env = setup({ [MAIN_KEY]: MAIN, ...OTHERS, ...initial }, { now: () => t });
     env.port.load();
-    const tick = () => (t += 60_000);
+    const tick = (ms = 60_000) => (t += ms);
     const preImportKeys = () => [...env.ls.data.keys()].filter((k) => k.startsWith(PRE)).sort();
     const untouched = () => {
       expect(env.ls.data.get(MAIN_KEY)).toBe(MAIN);
@@ -725,6 +788,21 @@ describe('pre-import backup retention in writeBackup (#11)', () => {
     });
     expect(port.writeBackup('pre-import', 'now')).toBe('ok');
     expect(preImportKeys()).toEqual([key(-2), key(-1), key(0)]);
+    untouched();
+  });
+
+  it('a corrected clock cannot pin future-dated backups above new ones (#18)', () => {
+    // The issue's executed scenario: three backups stamped an hour ahead, the clock back at
+    // 12:00, then two imports 1 ms apart. Both new backups survive; f1 and f2 go first.
+    const f = (i: number) => `${PRE}2026-10-19T13:00:00.00${i}Z`;
+    const { ls, port, tick, preImportKeys, untouched } = retention({ [f(1)]: 'f1', [f(2)]: 'f2', [f(3)]: 'f3' });
+    expect(port.writeBackup('pre-import', 'A')).toBe('ok');
+    tick(1);
+    expect(port.writeBackup('pre-import', 'B')).toBe('ok');
+    expect(preImportKeys()).toEqual([key(0), `${PRE}2026-10-19T12:00:00.001Z`, f(3)]);
+    expect(ls.data.get(key(0))).toBe('A');
+    expect(ls.data.get(`${PRE}2026-10-19T12:00:00.001Z`)).toBe('B');
+    expect(ls.removes).toEqual([f(1), f(2)]);
     untouched();
   });
 

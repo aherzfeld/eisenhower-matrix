@@ -118,7 +118,7 @@ export function createBrowserStorage({
       return isQuotaError(e) ? 'full' : 'failed';
     }
     if (key === null) return 'failed';
-    if (label === PRE_IMPORT_LABEL) prunePreImportBackups(store, key);
+    if (label === PRE_IMPORT_LABEL) prunePreImportBackups(store, key, now());
     return 'ok';
   }
 
@@ -298,30 +298,41 @@ function parsePreImportKey(key: string): { ms: number; n: number } | null {
  * `justWritten`, which is never selected (even if a clock moved back makes it look oldest).
  * Only keys that parse exactly as `eisenhower:backup:pre-import:<ISO ts>[-N]` are ever
  * selected; the rest are ordered newest first by timestamp, then by N.
+ *
+ * A key stamped after `now` (epoch ms) was written while the clock ran ahead, so it really is
+ * older than anything written since; it orders below every present-day key and is pruned
+ * first (#18). A key stamped exactly at `now` is present-day. Among future-dated keys the
+ * order is the same as among present-day ones (later timestamp, then higher N, is newer).
  */
-export function preImportBackupsToPrune(keys: readonly string[], justWritten: string, keep: number): string[] {
-  const older: { key: string; ms: number; n: number }[] = [];
+export function preImportBackupsToPrune(
+  keys: readonly string[],
+  justWritten: string,
+  keep: number,
+  now: number,
+): string[] {
+  const older: { key: string; ms: number; n: number; future: boolean }[] = [];
   for (const key of keys) {
     if (key === justWritten) continue;
     const parsed = parsePreImportKey(key);
-    if (parsed) older.push({ key, ...parsed });
+    if (parsed) older.push({ key, ...parsed, future: parsed.ms > now });
   }
-  older.sort((a, b) => b.ms - a.ms || b.n - a.n);
+  older.sort((a, b) => Number(a.future) - Number(b.future) || b.ms - a.ms || b.n - a.n);
   return older.slice(Math.max(keep - 1, 0)).map((b) => b.key);
 }
 
 /**
- * Removes the pre-import backups beyond the newest PRE_IMPORT_KEEP. Best effort and never
- * throws: the import it follows goes ahead regardless, and the first failure ends the pass.
+ * Removes the pre-import backups beyond the newest PRE_IMPORT_KEEP, judged at `now`. Best
+ * effort and never throws: the import it follows goes ahead regardless, and the first failure
+ * ends the pass.
  */
-function prunePreImportBackups(store: KeyValueStore, justWritten: string): void {
+function prunePreImportBackups(store: KeyValueStore, justWritten: string, now: number): void {
   try {
     const keys: string[] = [];
     for (let i = 0; i < store.length; i++) {
       const key = store.key(i);
       if (key !== null) keys.push(key);
     }
-    for (const key of preImportBackupsToPrune(keys, justWritten, PRE_IMPORT_KEEP)) store.removeItem(key);
+    for (const key of preImportBackupsToPrune(keys, justWritten, PRE_IMPORT_KEEP, now)) store.removeItem(key);
   } catch {
     // Left for the next import to try again.
   }
