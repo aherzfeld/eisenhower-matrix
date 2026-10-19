@@ -179,6 +179,62 @@ describe('due rechecks', () => {
     expect(row('s').querySelector('.stamp--due')).not.toBeNull();
   });
 
+  describe('focus after a deferred render (#12)', () => {
+    /** Focus leaves the field for `next`, as Tab or a click would: focusout first, then focus. */
+    function moveFocus(from: HTMLElement, next: HTMLElement) {
+      key(from, 'Tab');
+      next.focus();
+    }
+
+    it('lands on the control in the same row that focus moved to, not on body', () => {
+      boot([dueTask()]);
+      const date = row('s').querySelector<HTMLInputElement>('.task__when')!;
+      date.focus();
+      clock = new Date(2026, 2, 11, 0, 0, 0, 0);
+      vi.advanceTimersByTime(12 * 3600 * 1000);
+      expect(row('s').querySelector('.task__when')).toBe(date); // deferred while typing
+      const rename = row('s').querySelector<HTMLElement>('.task__rename')!;
+      moveFocus(date, rename);
+      expect(row('s').querySelector('.stamp--due')).not.toBeNull(); // the render ran
+      expect(rename.isConnected).toBe(false); // and rebuilt the row
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement).toBe(row('s').querySelector('.task__rename'));
+    });
+
+    it('lands on the same control in another row', () => {
+      boot([dueTask(), task('o', 'Other', true, true)]);
+      const date = row('s').querySelector<HTMLInputElement>('.task__when')!;
+      date.focus();
+      clock = new Date(2026, 2, 11, 0, 0, 0, 0);
+      vi.advanceTimersByTime(12 * 3600 * 1000);
+      moveFocus(date, row('o').querySelector<HTMLElement>('.task__delete')!);
+      expect(document.activeElement).toBe(row('o').querySelector('.task__delete'));
+    });
+
+    it('falls back to the row when the control is gone after the render', () => {
+      const { storage } = boot([task('s', 'Today', false, true, { when: '2026-03-10' })]);
+      const date = row('s').querySelector<HTMLInputElement>('.task__when')!;
+      date.focus();
+      const state = app!.getState();
+      storage.simulateExternalChange({
+        ...state,
+        tasks: state.tasks.map((t) => ({ ...t, when: '2026-03-20' })),
+      });
+      const promote = row('s').querySelector<HTMLElement>('.task__promote')!; // still Due on screen
+      moveFocus(date, promote);
+      expect(row('s').querySelector('.task__promote')).toBeNull();
+      expect(document.activeElement).toBe(row('s'));
+    });
+
+    it('falls back to the capture input when the row is gone', () => {
+      const { storage } = boot([dueTask()]);
+      row('s').querySelector<HTMLInputElement>('.task__when')!.focus();
+      storage.simulateExternalChange({ ...app!.getState(), tasks: [] });
+      expect(root.querySelector('.task')).toBeNull();
+      expect(document.activeElement).toBe(input());
+    });
+  });
+
   it('fires once at each local midnight for a whole year, DST days included, with one timer armed', () => {
     vi.setSystemTime(new Date(2026, 0, 1, 12, 0, 0));
     const fired: Date[] = [];

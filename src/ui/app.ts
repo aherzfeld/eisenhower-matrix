@@ -196,8 +196,31 @@ export function createApp({
     else row.focus();
   }
 
-  function render(focusId?: string) {
-    const id = focusId ?? rowOf(doc.activeElement)?.dataset.taskId;
+  /** A focused element in one of this board's rows, as task id plus control (#12). */
+  type FocusSpot = { id: string; control?: string };
+
+  function spotOf(target: Element | null): FocusSpot | undefined {
+    const row = rowOf(target);
+    const id = row?.dataset.taskId;
+    if (!row || !id || !root.contains(row)) return undefined;
+    return { id, control: target instanceof HTMLElement ? target.dataset.control : undefined };
+  }
+
+  /** Focuses the rebuilt twin of a control, else its row, else (the row is gone) the capture input. */
+  function restoreFocus({ id, control }: FocusSpot) {
+    const row = findRow(id);
+    if (!row) return focusCapture();
+    const twin = control ? row.querySelector<HTMLElement>(`[data-control="${control}"]`) : null;
+    if (twin && !twin.hidden) twin.focus();
+    else focusRow(id);
+  }
+
+  /**
+   * `focusTarget` is the element focus is on, or moving to: it, or its twin after the rebuild,
+   * gets focus back. A `focusId` puts focus on that task's row instead.
+   */
+  function render(focusId?: string, focusTarget: Element | null = doc.activeElement) {
+    const spot = focusId ? { id: focusId } : spotOf(focusTarget);
     if (focusId) {
       const t = taskOf(focusId);
       if (t) tabStops[quadrantOf(t)] = focusId;
@@ -206,7 +229,7 @@ export function createApp({
     renderStale = false;
     renderBoard(shell, state.tasks, { tabStops, editing, today: renderedToday });
     updateBackupStatus();
-    if (id) focusRow(id);
+    if (spot) restoreFocus(spot);
   }
 
   /**
@@ -650,7 +673,9 @@ export function createApp({
   root.addEventListener('focusout', (event) => {
     const next = event.relatedTarget;
     const stillInField = next instanceof Element && next.matches('.task__when, .task__who, .task__edit');
-    if (renderStale && !stillInField) render(); // activeElement may not have moved yet, so not recheckDue()
+    // Focus is between elements here (activeElement is body), so it goes back to where it was
+    // heading: the rebuilt twin of `next`. Not recheckDue(), which would see no field focused.
+    if (renderStale && !stillInField) render(undefined, next instanceof Element ? next : null);
   }, opts);
   doc.addEventListener('keydown', onDocKeydown, opts);
   doc.addEventListener('visibilitychange', () => {

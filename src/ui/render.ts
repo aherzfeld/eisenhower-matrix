@@ -191,6 +191,7 @@ function buildStamps(task: Task, today: string, isNext: boolean): HTMLElement[] 
     promote.type = 'button';
     promote.tabIndex = -1;
     promote.dataset.move = 'do';
+    promote.dataset.control = 'promote';
     promote.setAttribute('aria-label', `Move to Do: ${task.title}`);
     out.push(promote);
   }
@@ -207,6 +208,10 @@ export function refreshStamps(li: HTMLElement, task: Task, today: string): void 
   slot.replaceChildren(...buildStamps(task, today, isNext));
 }
 
+/**
+ * Each control in a row carries `data-control`, unique within the row and the same on every
+ * render, so focus can be put back on a rebuilt row's matching control (#12).
+ */
 function renderTask(
   task: Task,
   tabStop: boolean,
@@ -223,6 +228,7 @@ function renderTask(
   check.type = 'checkbox';
   check.checked = task.done;
   check.tabIndex = -1;
+  check.dataset.control = 'check';
   check.setAttribute('aria-label', `Done: ${task.title}`);
   li.append(check);
 
@@ -230,6 +236,7 @@ function renderTask(
     const edit = el('input', 'task__edit');
     edit.type = 'text';
     edit.value = editing.draft;
+    edit.dataset.control = 'edit';
     edit.setAttribute('aria-label', 'Rename task');
     li.append(edit);
     const error = el('span', 'task__error', editing.error ?? '');
@@ -248,6 +255,7 @@ function renderTask(
     const when = el('input', 'task__when');
     when.type = 'date';
     when.value = task.when ?? '';
+    when.dataset.control = 'when';
     when.setAttribute('aria-label', `Date for ${task.title}`);
     li.append(when);
   } else if (quadrant === 'delegate') {
@@ -255,6 +263,7 @@ function renderTask(
     who.type = 'text';
     who.placeholder = 'Who?';
     who.value = task.who ?? '';
+    who.dataset.control = 'who';
     who.autocomplete = 'off';
     who.setAttribute('aria-label', `Who is handling ${task.title}`);
     li.append(who);
@@ -264,6 +273,7 @@ function renderTask(
     const renameButton = el('button', 'task__rename');
     renameButton.type = 'button';
     renameButton.tabIndex = -1;
+    renameButton.dataset.control = 'rename';
     renameButton.setAttribute('aria-label', `Rename ${task.title}`);
     renameButton.append(chip('↵'));
     li.append(renameButton);
@@ -275,6 +285,7 @@ function renderTask(
     b.type = 'button';
     b.tabIndex = -1;
     b.dataset.move = q.id;
+    b.dataset.control = `move-${q.id}`;
     b.setAttribute('aria-label', `Move to ${q.label}`);
     b.append(chip(q.key));
     moves.append(b);
@@ -284,6 +295,7 @@ function renderTask(
   const del = el('button', 'task__delete');
   del.type = 'button';
   del.tabIndex = -1;
+  del.dataset.control = 'delete';
   del.setAttribute('aria-label', `Delete ${task.title}`);
   del.append(chip('⌫'));
   li.append(del);
