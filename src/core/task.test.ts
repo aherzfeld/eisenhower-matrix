@@ -51,6 +51,10 @@ describe('createTask', () => {
     expect(createTask([], { title: 'x', urgent: true, important: true }, { id: 'a', now: 'bad' }).ok).toBe(false);
     expect(createTask([], { title: 'x', urgent: true, important: true, when: '2026-02-30' }, { id: 'a', now: T0 }).ok).toBe(false);
   });
+  it('appends after the last task even when the quadrant has gaps in its order', () => {
+    const gappy = add(add([], 'a'), 'b').map((t) => (t.id === 'b' ? { ...t, order: 5 } : t));
+    expect(orders(add(gappy, 'n'), true, true)).toEqual([['a', 0], ['b', 1], ['n', 2]]);
+  });
   it('rejects a duplicate id', () => {
     expect(createTask(add([], 'a'), { title: 'x', urgent: true, important: true }, { id: 'a', now: T0 }).ok).toBe(false);
   });
@@ -91,6 +95,13 @@ describe('setFlags', () => {
   });
   it('rejects unknown ids', () => {
     expect(setFlags([], 'a', { urgent: true, important: true }, T1).ok).toBe(false);
+  });
+  it('appends after the last task even when the destination has gaps in its order', () => {
+    let tasks = add(add([], 'a'), 'b');
+    tasks = add(tasks, 'c', false, true);
+    tasks = tasks.map((t) => (t.id === 'b' ? { ...t, order: 5 } : t));
+    tasks = must(setFlags(tasks, 'c', { urgent: true, important: true }, T1));
+    expect(orders(tasks, true, true)).toEqual([['a', 0], ['b', 1], ['c', 2]]);
   });
 });
 
@@ -133,6 +144,10 @@ describe('reorder', () => {
     expect(orders(tasks, true, true)).toEqual([['b', 0], ['a', 1], ['c', 2]]);
     tasks = must(reorder(tasks, 'c', 'up', T1));
     expect(orders(tasks, true, true)).toEqual([['b', 0], ['c', 1], ['a', 2]]);
+  });
+  it('sets updatedAt only on the two swapped tasks', () => {
+    const tasks = must(reorder(three(), 'a', 'down', T1));
+    expect(tasks.map((t) => [t.id, t.updatedAt])).toEqual([['a', T1], ['b', T1], ['c', T0]]);
   });
   it('is a no-op at the edges', () => {
     const tasks = three();

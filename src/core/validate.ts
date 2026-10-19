@@ -33,7 +33,9 @@ export function validateWhen(input: unknown): Result<string> {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input);
   if (!m) return fail('Date must look like YYYY-MM-DD.');
   const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const probe = new Date(Date.UTC(y, mo - 1, d));
+  // setUTCFullYear, not Date.UTC: Date.UTC maps years 0-99 to 1900-1999.
+  const probe = new Date(0);
+  probe.setUTCFullYear(y, mo - 1, d);
   const real =
     probe.getUTCFullYear() === y && probe.getUTCMonth() === mo - 1 && probe.getUTCDate() === d;
   return real ? ok(input) : fail('Date is not a real calendar date.');

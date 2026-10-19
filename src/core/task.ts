@@ -52,6 +52,11 @@ function normalizeOrders(tasks: Task[]): Task[] {
   return tasks.map((t) => (next.get(t.id) === t.order ? { ...t } : { ...t, order: next.get(t.id)! }));
 }
 
+/** An order past every task in the quadrant, so normalizeOrders puts the newcomer last. */
+function endOf(tasks: Task[], q: Quadrant): number {
+  return Math.max(-1, ...inQuadrant(tasks, q).map((t) => t.order)) + 1;
+}
+
 function find(tasks: Task[], id: string): Result<Task> {
   const t = tasks.find((x) => x.id === id);
   return t ? ok(t) : fail(`No task with id ${id}.`);
@@ -80,7 +85,7 @@ export function createTask(tasks: Task[], input: NewTask, ctx: CreateContext): R
     title: title.value,
     ...flags,
     done: false,
-    order: inQuadrant(tasks, quadrantOf(flags)).length,
+    order: endOf(tasks, quadrantOf(flags)),
     createdAt: now.value,
     updatedAt: now.value,
   };
@@ -110,7 +115,7 @@ export function setFlags(tasks: Task[], id: string, flags: Flags, now: string): 
   const dest = quadrantOf(flags);
   if (quadrantOf(found.value) === dest) return ok(tasks.map((t) => ({ ...t })));
   const f = flagsFor(dest);
-  const appended = inQuadrant(tasks, dest).length;
+  const appended = endOf(tasks, dest);
   const moved = tasks.map((t) =>
     t.id === id ? { ...t, ...f, order: appended, updatedAt: n.value } : { ...t },
   );

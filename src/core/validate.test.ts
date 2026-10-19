@@ -37,7 +37,12 @@ describe('validateWho', () => {
 describe('validateWhen', () => {
   it('accepts real dates', () => {
     expect(validateWhen('2026-10-19')).toEqual(ok('2026-10-19'));
+    expect(validateWhen('2024-02-29')).toEqual(ok('2024-02-29'));
     expect(validateWhen('2028-02-29')).toEqual(ok('2028-02-29'));
+  });
+  it('accepts years below 100, which a native date input can produce', () => {
+    expect(validateWhen('0001-01-01')).toEqual(ok('0001-01-01'));
+    expect(validateWhen('0050-06-15')).toEqual(ok('0050-06-15'));
   });
   it.each(['2026-02-29', '2026-13-01', '2026-00-10', '2026-04-31', '2026-1-1', '26-10-19', '2026-10-19T00:00:00Z', '', 'x'])(
     'rejects %s',
@@ -81,12 +86,14 @@ describe('validateTask', () => {
     createdAt: '2026-10-19T12:00:00.000Z',
     updatedAt: '2026-10-19T12:00:00.000Z',
   };
-  it('accepts a minimal task', () => expect(validateTask(base)).toEqual(ok(base)));
+  it('accepts a minimal task', () => expect(validateTask(base)).toStrictEqual(ok(base)));
   it('accepts when and who', () => {
     const t = { ...base, when: '2026-10-20', who: 'Sam' };
     expect(validateTask(t)).toEqual(ok(t));
   });
-  it('drops an empty who', () => expect(validateTask({ ...base, who: '' })).toEqual(ok(base)));
+  it('drops an empty who, removing the key', () => {
+    expect(validateTask({ ...base, who: '' })).toStrictEqual(ok(base));
+  });
   it('rejects non-objects', () => {
     expect(validateTask(null).ok).toBe(false);
     expect(validateTask([]).ok).toBe(false);
