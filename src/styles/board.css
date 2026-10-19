@@ -88,7 +88,6 @@
   flex-direction: column;
   min-width: 0;
   background: var(--q-tint);
-  container-type: inline-size;
 }
 
 /* Halftone: a dot screen of the band ink at 18%, behind the list, never under text at full strength. */
@@ -230,13 +229,29 @@
   box-shadow: inset 0 0 0 3px var(--q-tint), inset 0 0 0 9px var(--q-ink);
 }
 
+/*
+ * Done: the circle fills with band ink, plus a tick in the band text colour (literal, like the
+ * band text), so a done row still reads as done on the yellow and grey tints, where the ink
+ * fill and the strike are close to the body colour.
+ */
 .task__check:checked {
-  background: var(--q-ink);
+  background: var(--q-ink) center / 100% no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='M5.2 9.3l2.5 2.5 5.1-5.3' fill='none' stroke='%231B2340' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   box-shadow: none;
 }
 
+.q--schedule .task__check:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='M5.2 9.3l2.5 2.5 5.1-5.3' fill='none' stroke='%23FAFAF7' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
 .task__title {
-  flex: 0 1 auto;
+  /*
+   * Counts as at most 10rem when the row decides what wraps, then grows to its full width: the
+   * stamps sit just after the title and the field keeps to the right edge on the same line. Only
+   * a row too narrow for 10rem of title beside them wraps, and then the field stays right.
+   */
+  flex: 1 1 10rem;
+  max-width: max-content;
   min-width: 0;
   padding-block: 0.175rem;
   font-weight: 500;
@@ -359,7 +374,7 @@
   .task__who {
     field-sizing: content;
     width: auto;
-    min-width: 4.5rem;
+    min-width: 3.25rem;
     max-width: 12rem;
   }
 }
@@ -463,14 +478,6 @@
 
   .task__moves {
     margin-inline: 0.25rem;
-  }
-}
-
-/* Narrow quadrant: extras start under the title rather than hanging off the right edge. */
-@container (max-width: 22rem) {
-  .task__when,
-  .task__who {
-    margin-left: 0;
   }
 }
 
