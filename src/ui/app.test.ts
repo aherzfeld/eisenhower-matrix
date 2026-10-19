@@ -421,3 +421,134 @@ describe('keyboard navigation and editing', () => {
     expect(document.activeElement).toBe(edit);
   });
 });
+
+describe('review fixes', () => {
+  it('Alt+arrow reorders past done tasks, so every press moves the task on screen', () => {
+    boot({
+      initial: {
+        ...emptyState(),
+        tasks: [task('a', 'A', true, true, 0), task('d', 'D', true, true, 1, true), task('b', 'B', true, true, 2)],
+      },
+    });
+    expect(titles('do')).toEqual(['A', 'B', 'D']);
+    row('a').focus();
+    key(row('a'), 'ArrowDown', { altKey: true });
+    expect(titles('do')).toEqual(['B', 'A', 'D']);
+    expect(document.activeElement).toBe(row('a'));
+    key(row('a'), 'ArrowUp', { altKey: true });
+    expect(titles('do')).toEqual(['A', 'B', 'D']);
+  });
+
+  it('Alt+arrow at the visible edge changes nothing and saves nothing', () => {
+    const { storage } = boot({
+      initial: {
+        ...emptyState(),
+        tasks: [task('a', 'A', true, true, 0), task('b', 'B', true, true, 1), task('d', 'D', true, true, 2, true)],
+      },
+    });
+    row('b').focus();
+    key(row('b'), 'ArrowDown', { altKey: true });
+    expect(titles('do')).toEqual(['A', 'B', 'D']);
+    expect(storage.load().state.rev).toBe(0);
+  });
+
+  it('destroy removes every listener, so a second app on the same root acts alone', () => {
+    const storage = createMemoryStorage({ initial: { ...emptyState(), tasks: [task('a', 'A', true, true)] } });
+    const first = createApp({ root, storage, now: () => NOW, newId: () => 'x' });
+    first.destroy();
+    boot({ storage });
+    row('a').querySelector<HTMLInputElement>('.task__check')!.click();
+    row('a').querySelector<HTMLButtonElement>('[aria-label="Move to Schedule"]')!.click();
+    expect(first.getState().tasks[0]).toMatchObject({ done: false, urgent: true });
+    expect(app!.getState().tasks[0]).toMatchObject({ done: true, urgent: false });
+    expect(root.querySelector('.banner')).toBeNull();
+  });
+
+  it('a labelled Rename button opens the editor (rename without the Enter shortcut)', () => {
+    boot({ initial: { ...emptyState(), tasks: [task('a', 'A', true, true)] } });
+    const button = row('a').querySelector<HTMLButtonElement>('.task__rename')!;
+    expect(button.getAttribute('aria-label')).toBe('Rename A');
+    expect(button.querySelector('.key')!.getAttribute('aria-hidden')).toBe('true');
+    button.click();
+    expect(document.activeElement).toBe(row('a').querySelector('.task__edit'));
+  });
+
+  it('an Enter that confirms an IME composition neither opens the prompt nor saves a rename', () => {
+    boot({ initial: { ...emptyState(), tasks: [task('a', 'A', true, true)] } });
+    typeTitle('にほん');
+    key(input(), 'Enter', { isComposing: true });
+    key(input(), 'Enter', { keyCode: 229 }); // Safari: compositionend fires before this keydown
+    expect(prompt().dataset.active).toBe('false');
+    row('a').focus();
+    key(row('a'), 'Enter');
+    const edit = row('a').querySelector<HTMLInputElement>('.task__edit')!;
+    edit.value = 'にほん';
+    edit.dispatchEvent(new Event('input', { bubbles: true }));
+    key(edit, 'Enter', { isComposing: true });
+    key(edit, 'Enter', { keyCode: 229 });
+    expect(row('a').querySelector('.task__edit')).not.toBeNull();
+    expect(app!.getState().tasks[0]!.title).toBe('A');
+  });
+
+  it('while the prompt is open, a board shortcut on a focused task does nothing', () => {
+    boot({ initial: { ...emptyState(), tasks: [task('a', 'A', true, true)] } });
+    typeTitle('New');
+    key(input(), 'Enter');
+    row('a').focus(); // e.g. clicked with the mouse
+    for (const k of ['2', ' ', 'Enter']) key(row('a'), k);
+    expect(titles('do')).toEqual(['A']);
+    expect(app!.getState().tasks[0]!.done).toBe(false);
+    expect(prompt().textContent).toContain('Important?');
+  });
+
+  it('a second Enter in the capture input does not restart the prompt', () => {
+    boot();
+    typeTitle('Once');
+    key(input(), 'Enter');
+    key(prompt(), 'y');
+    input().focus();
+    key(input(), 'Enter');
+    expect(prompt().textContent).toContain('Urgent?');
+    key(prompt(), 'n');
+    expect(titles('schedule')).toEqual(['Once']);
+  });
+
+  it('browser chords pass through the prompt untouched', () => {
+    boot();
+    typeTitle('Thing');
+    key(input(), 'Enter');
+    expect(key(prompt(), 'r', { metaKey: true }).defaultPrevented).toBe(false);
+    expect(key(prompt(), 'y', { ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(prompt().textContent).toContain('Important?');
+  });
+
+  it('Space or Enter on a focused button activates the button, not the row shortcut', () => {
+    boot({ initial: { ...emptyState(), tasks: [task('a', 'A', true, true)] } });
+    const button = row('a').querySelector<HTMLButtonElement>('.task__move')!;
+    button.focus();
+    expect(key(button, ' ').defaultPrevented).toBe(false);
+    expect(key(button, 'Enter').defaultPrevented).toBe(false);
+    expect(app!.getState().tasks[0]!.done).toBe(false);
+    expect(row('a').querySelector('.task__edit')).toBeNull();
+  });
+
+  it('the Tab stop a user moved to survives a re-render triggered elsewhere', () => {
+    boot({
+      initial: { ...emptyState(), tasks: [task('a', 'A', true, true, 0), task('b', 'B', true, true, 1)] },
+    });
+    row('a').focus();
+    key(row('a'), 'ArrowDown');
+    typeTitle('Other');
+    key(input(), 'Enter');
+    key(prompt(), 'n');
+    key(prompt(), 'n');
+    expect(row('b').tabIndex).toBe(0);
+    expect(row('a').tabIndex).toBe(-1);
+    expect(q('do').querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+  });
+
+  it('the banner slot is a live region before any warning appears', () => {
+    boot();
+    expect(root.querySelector('.banner-slot')!.getAttribute('role')).toBe('status');
+  });
+});

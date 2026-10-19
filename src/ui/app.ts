@@ -1,11 +1,12 @@
 /** The app controller: holds state, applies core ops, saves, re-renders, routes events. */
 import { flagsFor, quadrantOf, type Quadrant } from '../core/quadrant';
 import type { StoragePort } from '../core/ports';
-import { createTask, rename, reorder, setFlags, toggleDone, type StoredState, type Task } from '../core/task';
+import { createTask, rename, setFlags, toggleDone, type StoredState, type Task } from '../core/task';
 import { validateTitle, type Result } from '../core/validate';
 import { renderBanner } from './banner';
 import { START, paintSquares, renderPrompt, squareClasses, triageKey, type Triage } from './capture';
-import { resolveKey, type KeyAction } from './keys';
+import { isComposing, resolveKey, type KeyAction } from './keys';
+import { reorderVisible } from './order';
 import { buildShell, renderBoard, type Editing, type Shell } from './render';
 
 export type AppOptions = {
@@ -86,6 +87,7 @@ export function createApp({ root, storage, now, newId }: AppOptions): App {
   function commit(op: (tasks: Task[]) => Result<Task[]>, opts: { focusId?: string } = {}) {
     const result = op(state.tasks);
     if (!result.ok) return result;
+    if (result.value === state.tasks) return result; // the op changed nothing: no save, no render
     state = { ...state, tasks: result.value };
     persist();
     render(opts.focusId);
@@ -195,7 +197,7 @@ export function createApp({ root, storage, now, newId }: AppOptions): App {
         return stepFocus(row, action.delta);
       case 'reorder':
         event.preventDefault();
-        return void commit((tasks) => reorder(tasks, id, action.direction, now()), { focusId: id });
+        return void commit((tasks) => reorderVisible(tasks, id, action.direction, now()), { focusId: id });
       case 'toggleDone':
       case 'rename':
         // Only when the row itself has focus: on a button, Space/Enter must still click it.
@@ -215,18 +217,22 @@ export function createApp({ root, storage, now, newId }: AppOptions): App {
     if (action) handleAction(action, event);
   }
 
+  // One signal removes every listener in destroy(); renders never add listeners (delegation).
+  const listening = new AbortController();
+  const opts = { signal: listening.signal };
+
   shell.input.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' || event.isComposing || triage) return;
+    if (event.key !== 'Enter' || isComposing(event) || triage) return;
     event.preventDefault();
     startTriage();
   });
   shell.input.addEventListener('input', () => {
     shell.message.textContent = '';
-  });
+  }, opts);
 
   root.addEventListener('keydown', (event) => {
     const t = event.target;
-    if (!(t instanceof HTMLInputElement) || !t.classList.contains('task__edit') || event.isComposing) return;
+    if (!(t instanceof HTMLInputElement) || !t.classList.contains('task__edit') || isComposing(event)) return;
     if (event.key === 'Enter') {
       event.preventDefault();
       if (editing) editing.draft = t.value;
@@ -235,22 +241,24 @@ export function createApp({ root, storage, now, newId }: AppOptions): App {
       event.preventDefault();
       cancelRename();
     }
-  });
+  }, opts);
   root.addEventListener('input', (event) => {
     const t = event.target;
     if (editing && t instanceof HTMLInputElement && t.classList.contains('task__edit')) editing.draft = t.value;
-  });
+  }, opts);
   root.addEventListener('change', (event) => {
     const t = event.target;
     if (!(t instanceof HTMLInputElement) || !t.classList.contains('task__check')) return;
     const id = rowOf(t)?.dataset.taskId;
     if (id) commit((tasks) => toggleDone(tasks, id, now()), { focusId: id });
-  });
+  }, opts);
   root.addEventListener('click', (event) => {
-    const t = event.target instanceof Element ? event.target.closest<HTMLElement>('.task__move') : null;
+    const t = event.target instanceof Element ? event.target.closest<HTMLElement>('.task__move, .task__rename') : null;
     const id = rowOf(t)?.dataset.taskId;
-    if (t && id) moveTask(id, t.dataset.move as Quadrant);
-  });
+    if (!t || !id) return;
+    if (t.classList.contains('task__rename')) startRename(id);
+    else moveTask(id, t.dataset.move as Quadrant);
+  }, opts);
   root.addEventListener('focusin', (event) => {
     const row = rowOf(event.target);
     const id = row?.dataset.taskId;
@@ -258,8 +266,8 @@ export function createApp({ root, storage, now, newId }: AppOptions): App {
     if (!row || !task) return;
     tabStops[quadrantOf(task)] = id;
     for (const r of row.parentElement?.children ?? []) (r as HTMLElement).tabIndex = r === row ? 0 : -1;
-  });
-  doc.addEventListener('keydown', onDocKeydown);
+  }, opts);
+  doc.addEventListener('keydown', onDocKeydown, opts);
 
   renderPrompt(shell.prompt, undefined);
   updateBanner();
@@ -271,6 +279,6 @@ export function createApp({ root, storage, now, newId }: AppOptions): App {
     render,
     focusCapture,
     shell,
-    destroy: () => doc.removeEventListener('keydown', onDocKeydown),
+    destroy: () => listening.abort(),
   };
 }

@@ -70,6 +70,7 @@ export function buildShell(root: HTMLElement): Shell {
   header.append(backupStatus);
 
   const banner = el('div', 'banner-slot');
+  banner.setAttribute('role', 'status'); // the live region exists before any warning is put in it
 
   const capture = el('div', 'capture');
   const input = el('input', 'capture__input');
@@ -171,6 +172,15 @@ function renderTask(task: Task, tabStop: boolean, editing: Editing | undefined):
     li.append(error);
   } else {
     li.append(el('span', 'task__title', task.title));
+  }
+
+  if (!editing) {
+    const renameButton = el('button', 'task__rename');
+    renameButton.type = 'button';
+    renameButton.tabIndex = -1;
+    renameButton.setAttribute('aria-label', `Rename ${task.title}`);
+    renameButton.append(chip('↵'));
+    li.append(renameButton);
   }
 
   const moves = el('span', 'task__moves');

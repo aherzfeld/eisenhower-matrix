@@ -11,9 +11,17 @@ export type KeyAction =
 
 const MOVE_KEYS: Record<string, Quadrant> = { '1': 'do', '2': 'schedule', '3': 'delegate', '4': 'delete' };
 
+/**
+ * True while an IME is composing. Safari fires the Enter that confirms a composition after
+ * compositionend, with isComposing false but keyCode 229, so that is checked too.
+ */
+export function isComposing(event: KeyboardEvent): boolean {
+  return event.isComposing || event.keyCode === 229;
+}
+
 /** True when the keystroke belongs to a text control or an IME, not to the board. */
 export function isTyping(event: KeyboardEvent): boolean {
-  if (event.isComposing) return true;
+  if (isComposing(event)) return true;
   const t = event.target;
   if (!(t instanceof Element)) return false;
   if (t.closest('input, textarea, select')) return true;

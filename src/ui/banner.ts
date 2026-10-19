@@ -6,7 +6,6 @@ export function renderBanner(slot: HTMLElement, message: string | undefined): vo
   }
   const el = document.createElement('p');
   el.className = 'banner';
-  el.setAttribute('role', 'status');
   el.textContent = message;
   slot.replaceChildren(el);
 }
