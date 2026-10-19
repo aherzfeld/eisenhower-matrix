@@ -122,6 +122,20 @@ describe('deleting a task', () => {
     expect(root.querySelector('.task__edit')).toBeNull();
     expect(titles('do')).toEqual(['B', 'C']);
   });
+
+  it('Clear done mid-rename of a done task: Undo brings it back as it was, editor closed', () => {
+    boot({ tasks: [task('a', 'A', true, true, 0, true), task('b', 'B', true, true, 1)] });
+    row('a')!.focus();
+    key(row('a')!, 'Enter');
+    const edit = root.querySelector<HTMLInputElement>('.task__edit')!;
+    edit.value = 'Draft';
+    edit.dispatchEvent(new Event('input', { bubbles: true }));
+    clearDoneButton().click();
+    undoButton()!.click();
+    expect(titles('do')).toEqual(['B', 'A']);
+    expect(root.querySelector('.task__edit')).toBeNull();
+    expect(document.activeElement).toBe(row('a'));
+  });
 });
 
 describe('the undo window (AC7)', () => {
@@ -165,6 +179,28 @@ describe('the undo window (AC7)', () => {
     expect(titles('do')).toEqual(['B', 'C']);
     expect(app!.undo()).toBe(false);
     expect(titles('do')).toEqual(['B', 'C']);
+  });
+
+  it('destroy() cancels the live toast timer, and a replaced toast leaves only its own', () => {
+    const live = new Set<number>();
+    let next = 0;
+    const timers = {
+      setTimeout: (fn: () => void, ms: number) => {
+        const id = ++next;
+        live.add(id);
+        setTimeout(() => live.delete(id) && fn(), ms);
+        return id;
+      },
+      clearTimeout: (id: unknown) => void live.delete(id as number),
+    };
+    const storage = createMemoryStorage({ initial: { ...emptyState(), tasks: sam() } });
+    app = createApp({ root, storage, now: () => NOW, newId: () => 'z', timers });
+    pressDelete('sam');
+    pressDelete('b');
+    expect(live.size).toBe(1);
+    app.destroy();
+    expect(live.size).toBe(0);
+    expect(toastText()).toBeNull();
   });
 
   it('a reload forfeits undo: nothing about the window is persisted', () => {
