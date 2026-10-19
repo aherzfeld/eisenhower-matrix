@@ -1,0 +1,70 @@
+/*
+ * "Riso desk" tokens (docs/design.md). Every colour is the spec's exact hex: no HSL, no
+ * color-mix(), so nothing drifts. Light ("white stock") on bare :root; dark ("black stock")
+ * redefines the theme tokens. The four band inks and the two band-text colours are the same
+ * in both themes on purpose.
+ */
+:root {
+  color-scheme: light dark;
+
+  --paper: #F1F2EE;
+  --sheet: #FAFAF7;
+  --ink: #1B2340;
+  --ink-muted: #545B73;
+  --rule: #C9CCD3;
+
+  --do: #FF48B0;
+  --do-tint: #FFD9EC;
+  --schedule: #0078BF;
+  --schedule-tint: #CCE4F2;
+  --delegate: #FFE800;
+  --delegate-tint: #FFF8B3;
+  --delete: #A5AAA8;
+  --delete-tint: #E3E5E4;
+
+  --danger: #C8102E;
+
+  /* Band text: literal, never themed. */
+  --on-band: #1B2340;
+  --on-schedule: #FAFAF7;
+
+  /* Not in the spec: the import dialog's backdrop, the ink at 45% as an 8-digit hex. */
+  --scrim: #1B234073;
+  --grain-opacity: 0.06;
+
+  --font-display: 'Bricolage Grotesque Variable', 'Helvetica Neue', Arial, sans-serif;
+  --font-body: 'Instrument Sans Variable', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+  /* Type scale (rem): 0.75 · 0.875 · 1 · 1.125 · 1.5 · 2 · 3 */
+  --t-xs: 0.75rem;
+  --t-sm: 0.875rem;
+  --t-md: 1rem;
+  --t-lg: 1.125rem;
+  --t-xl: 1.5rem;
+  --t-2xl: 2rem;
+  --t-3xl: 3rem;
+
+  --gutter: 1.5rem;
+  --ease-register: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #121315;
+    --sheet: #1C1E22;
+    --ink: #ECEDE8;
+    --ink-muted: #A3A8B8;
+    --rule: #33363D;
+
+    --do-tint: #3A1A2C;
+    --schedule-tint: #0F2A3D;
+    --delegate-tint: #2E2A0C;
+    --delete-tint: #26292B;
+
+    --danger: #FF5A6E;
+
+    --scrim: #000000A6;
+    --grain-opacity: 0.08;
+  }
+}

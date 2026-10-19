@@ -1,3 +1,4 @@
+import './styles/index.css';
 import { createBrowserStorage } from './io/storage';
 import { createApp } from './ui/app';
 
