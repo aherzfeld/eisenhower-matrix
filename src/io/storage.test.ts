@@ -578,6 +578,15 @@ describe('writeBackup (pre-import backup, T11)', () => {
     expect(port.writeBackup('pre-import', 'current')).toBe('failed');
   });
 
+  it('fails rather than overwrite when the next suffix is already taken (suffix at the safe-integer limit)', () => {
+    const top = `${PRE_IMPORT_KEY}-${Number.MAX_SAFE_INTEGER}`;
+    const { ls, port } = setup({ [`${PRE_IMPORT_KEY}-${Number.MAX_SAFE_INTEGER - 1}`]: 'a', [top]: 'b' });
+    port.load();
+    expect(port.writeBackup('pre-import', 'current')).toBe('failed');
+    expect(ls.data.get(top)).toBe('b');
+    expect(ls.writes).toEqual([]);
+  });
+
   it('writes nothing in read-only mode (data from a newer version)', () => {
     const newer = JSON.stringify({ version: 2, rev: 0, tasks: [] });
     const { ls, port } = setup({ [MAIN_KEY]: newer });
@@ -609,6 +618,8 @@ describe('preImportBackupsToPrune (#11)', () => {
     expect(preImportBackupsToPrune([at(0, '-1'), at(0)], at(0, '-1'), 1)).toEqual([at(0)]);
     // A later timestamp beats any suffix.
     expect(preImportBackupsToPrune([at(1), at(0, '-9')], at(1), 1)).toEqual([at(0, '-9')]);
+    // Where text order and number order disagree (-9 > -10 as text), number order wins.
+    expect(preImportBackupsToPrune([at(0, '-9'), at(0, '-10'), at(0, '-11')], at(0, '-11'), 2)).toEqual([at(0, '-9')]);
   });
 
   it('never selects the key just written, even when its timestamp is the oldest (clock moved back)', () => {
@@ -641,6 +652,9 @@ describe('preImportBackupsToPrune (#11)', () => {
       `${PRE}2026-10-19T11:00:00.000Z-0`,
       `${PRE}2026-10-19T11:00:00.000Z-01`,
       `${PRE}2026-10-19T11:00:00.000Z-x`,
+      `${PRE}2026-10-19T11:00:00.000Z-99999999999999999999`,
+      `${PRE}x2026-10-19T11:00:00.000Z`,
+      `${PRE}12026-10-19T11:00:00.000Z`,
       `${PRE}2026-10-19T11:00:00.000Z:extra`,
       `${PRE}2026-10-19T11:00:00.000Z `,
       ` ${PRE}2026-10-19T11:00:00.000Z`,
