@@ -178,6 +178,25 @@ describe('due rechecks', () => {
     expect(row('s').querySelector('.stamp--due')).not.toBeNull();
   });
 
+  it('fires once at each local midnight for a whole year, DST days included, with one timer armed', () => {
+    vi.setSystemTime(new Date(2026, 0, 1, 12, 0, 0));
+    const fired: Date[] = [];
+    const timers = {
+      setTimeout: (fn: () => void, ms: number) => setTimeout(() => { fired.push(new Date()); fn(); }, ms),
+      clearTimeout: (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    };
+    const storage = createMemoryStorage({ initial: { ...emptyState(), tasks: [dueTask()] } });
+    app = createApp({ root, storage, now: () => new Date().toISOString(), newId: () => 'x', timers });
+    for (let day = 1; day <= 365; day++) {
+      vi.advanceTimersByTime(24 * 3600 * 1000);
+      expect(vi.getTimerCount()).toBe(1);
+    }
+    expect(fired).toHaveLength(365);
+    fired.forEach((at, i) => expect(at, `firing ${i}`).toEqual(new Date(2026, 0, 2 + i)));
+    // Rendered on the day it fell due: the task is dated 2026-03-11.
+    expect(root.querySelector('.stamp--due')).not.toBeNull();
+  });
+
   it('stops the timer on destroy', () => {
     boot([dueTask()]);
     app!.destroy();

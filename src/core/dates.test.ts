@@ -23,12 +23,32 @@ describe('localToday', () => {
     expect(localToday(local(2026, 12, 31, 23, 59))).toBe('2026-12-31');
     expect(localToday(local(2027, 1, 1, 0, 0))).toBe('2027-01-01');
   });
+  it('holds around midnight on the DST days of both pinned zones', () => {
+    for (const [m, d] of [[3, 8], [11, 1], [4, 5], [9, 27]] as const) {
+      const day = `2026-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      expect(localToday(local(2026, m, d, 0, 30))).toBe(day);
+      expect(localToday(local(2026, m, d, 23, 30))).toBe(day);
+      expect(localToday(local(2026, m, d, 23, 59, 59, 999))).toBe(day);
+    }
+  });
 });
 
 describe('msUntilMidnight', () => {
   it('counts to the next local midnight', () => {
     expect(msUntilMidnight(local(2026, 3, 1, 23, 30))).toBe(30 * 60 * 1000);
     expect(msUntilMidnight(local(2026, 3, 1, 0, 0, 0, 0))).toBeGreaterThanOrEqual(23 * 3600 * 1000);
+  });
+
+  // Every day of the year, so each pinned zone's own DST days (23 h and 25 h) are covered:
+  // Los Angeles 8 Mar and 1 Nov 2026, Auckland 5 Apr and 27 Sep 2026.
+  it('lands exactly on the next local midnight on every day, DST days included', () => {
+    for (let d = 1; d <= 365; d++) {
+      const next = local(2026, 1, d + 1); // the Date constructor rolls day 32 into February, etc.
+      for (const [h, mi] of [[0, 0], [1, 30], [3, 30], [12, 0], [23, 30]] as const) {
+        const now = local(2026, 1, d, h, mi);
+        expect(new Date(now.getTime() + msUntilMidnight(now)), now.toString()).toEqual(next);
+      }
+    }
   });
 });
 
