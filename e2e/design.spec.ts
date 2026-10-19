@@ -71,11 +71,36 @@ test('AC14: every request in a session goes to the app’s own origin, fonts inc
   expect(network.some((u) => u.endsWith('.woff2'))).toBe(true);
 });
 
-const SPEC = {
-  light: { paper: '#F1F2EE', ink: '#1B2340' },
-  dark: { paper: '#121315', ink: '#ECEDE8' },
-} as const;
+/** Every colour token in docs/design.md, per theme. The four band inks are the same in both. */
 const BANDS = { do: '#FF48B0', schedule: '#0078BF', delegate: '#FFE800', delete: '#A5AAA8' } as const;
+const SPEC = {
+  light: {
+    paper: '#F1F2EE',
+    sheet: '#FAFAF7',
+    ink: '#1B2340',
+    'ink-muted': '#545B73',
+    rule: '#C9CCD3',
+    'do-tint': '#FFD9EC',
+    'schedule-tint': '#CCE4F2',
+    'delegate-tint': '#FFF8B3',
+    'delete-tint': '#E3E5E4',
+    danger: '#C8102E',
+    ...BANDS,
+  },
+  dark: {
+    paper: '#121315',
+    sheet: '#1C1E22',
+    ink: '#ECEDE8',
+    'ink-muted': '#A3A8B8',
+    rule: '#33363D',
+    'do-tint': '#3A1A2C',
+    'schedule-tint': '#0F2A3D',
+    'delegate-tint': '#2E2A0C',
+    'delete-tint': '#26292B',
+    danger: '#FF5A6E',
+    ...BANDS,
+  },
+} as const;
 
 /** '#RRGGBB' → the 'rgb(r, g, b)' a computed style reports. */
 const rgb = (hex: string) =>
@@ -85,19 +110,12 @@ for (const scheme of ['light', 'dark'] as const) {
   test(`tokens resolve to the spec's exact hexes (${scheme})`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme });
     await page.goto('/');
-    const tokens = await page.evaluate(() => {
+    const names = Object.keys(SPEC[scheme]);
+    const tokens = await page.evaluate((names) => {
       const s = getComputedStyle(document.documentElement);
-      const get = (name: string) => s.getPropertyValue(name).trim().toUpperCase();
-      return {
-        paper: get('--paper'),
-        ink: get('--ink'),
-        do: get('--do'),
-        schedule: get('--schedule'),
-        delegate: get('--delegate'),
-        delete: get('--delete'),
-      };
-    });
-    expect(tokens).toEqual({ ...SPEC[scheme], ...BANDS });
+      return Object.fromEntries(names.map((n) => [n, s.getPropertyValue(`--${n}`).trim().toUpperCase()]));
+    }, names);
+    expect(tokens).toEqual(SPEC[scheme]);
 
     // And the painted colours, not just the declarations.
     const body = await page.evaluate(() => {
@@ -107,6 +125,47 @@ for (const scheme of ['light', 'dark'] as const) {
     expect(body).toEqual({ background: rgb(SPEC[scheme].paper), color: rgb(SPEC[scheme].ink) });
     for (const [q, hex] of Object.entries(BANDS)) {
       await expect(page.locator(`.q--${q} .q__band`)).toHaveCSS('background-color', rgb(hex));
+      await expect(page.locator(`.q--${q}`)).toHaveCSS('background-color', rgb(SPEC[scheme][`${q as keyof typeof BANDS}-tint`]));
+    }
+  });
+}
+
+test('the triage prompt drops over the board without moving it', async ({ page }) => {
+  await seed(page);
+  await page.goto('/');
+  await expect(page.locator('.task').first()).toBeVisible();
+  const before = await page.locator('.board').boundingBox();
+  await page.locator('.capture__input').focus();
+  await page.keyboard.type('Does the board move?');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.prompt')).toHaveAttribute('data-active', 'true');
+  await expect(page.locator('.prompt')).toBeVisible();
+  expect(await page.locator('.board').boundingBox()).toEqual(before);
+});
+
+for (const motion of ['no-preference', 'reduce'] as const) {
+  test(`print-in and the mini-matrix ${motion === 'reduce' ? 'stay still' : 'animate'} (prefers-reduced-motion: ${motion})`, async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: motion });
+    await page.goto('/');
+    await page.locator('.capture__input').focus();
+    await page.keyboard.type('Land me');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.prompt__question')).toHaveText('Important?');
+    const mini = await page.locator('.mini__sq').first().evaluate((sq) => getComputedStyle(sq).transitionDuration);
+    await page.keyboard.press('y');
+    await page.keyboard.press('y');
+    const row = page.locator('.q--do .task.is-new');
+    await expect(row).toHaveCount(1);
+    const names = await row.evaluate((li) => [
+      getComputedStyle(li).animationName,
+      getComputedStyle(li.querySelector('.task__title')!).animationName,
+    ]);
+    if (motion === 'reduce') {
+      expect(mini).toBe('0s');
+      expect(names).toEqual(['none', 'none']);
+    } else {
+      expect(mini).not.toBe('0s');
+      expect(names).toEqual(['print-in', 'print-in-text']);
     }
   });
 }
