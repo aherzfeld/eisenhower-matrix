@@ -70,7 +70,7 @@ export function restore(tasks: Task[], record: RemovalRecord): Task[] {
     for (const t of [...returning].sort((a, b) => indexIn(a.id) - indexIn(b.id))) {
       let at = 0;
       for (let i = indexIn(t.id) - 1; i >= 0; i--) {
-        const k = current.indexOf(original[i]);
+        const k = current.indexOf(original[i]!);
         if (k !== -1) {
           at = k + 1;
           break;

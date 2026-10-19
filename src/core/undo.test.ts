@@ -48,7 +48,7 @@ describe('removeOne', () => {
     expect(ids(r.value.tasks, 'do')).toEqual(['a', 'c', 'd']);
     expectContiguous(r.value.tasks);
     expect(r.value.record.removed.map((t) => t.id)).toEqual(['b']);
-    expect(r.value.record.removed[0].order).toBe(1);
+    expect(r.value.record.removed[0]?.order).toBe(1);
   });
 
   it('fails for an unknown id', () => {
