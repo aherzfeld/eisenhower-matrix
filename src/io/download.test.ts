@@ -8,7 +8,6 @@ afterEach(() => {
 describe('downloadText', () => {
   it('saves the text, byte for byte, through a Blob URL and a temporary link', async () => {
     let blob: Blob | undefined;
-    let clicked: HTMLAnchorElement | undefined;
     let connectedAtClick = false;
     const url = {
       createObjectURL: vi.fn((b: Blob) => {
@@ -17,8 +16,7 @@ describe('downloadText', () => {
       }),
       revokeObjectURL: vi.fn(),
     };
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-      clicked = this;
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
       connectedAtClick = this.isConnected; // Firefox only follows links that are in the document
     });
     let revoke: (() => void) | undefined;
@@ -29,6 +27,8 @@ describe('downloadText', () => {
         revoke = fn;
       },
     });
+    expect(click).toHaveBeenCalledOnce();
+    const clicked = click.mock.contexts[0] as HTMLAnchorElement;
     expect(await blob!.text()).toBe('{"broken');
     expect(blob!.type).toBe('application/json');
     expect(clicked!.download).toBe('data.json');

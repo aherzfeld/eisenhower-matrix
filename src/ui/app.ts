@@ -1,11 +1,13 @@
 /** The app controller: holds state, applies core ops, saves, re-renders, routes events. */
 import { QUADRANTS, flagsFor, quadrantOf, type Quadrant } from '../core/quadrant';
-import type { StoragePort } from '../core/ports';
+import type { LoadResult, StoragePort } from '../core/ports';
 import { localToday, msUntilMidnight } from '../core/dates';
-import { createTask, rename, setFlags, setWhen, setWho, toggleDone, type StoredState, type Task } from '../core/task';
+import { createTask, rename, sameTasks, setFlags, setWhen, setWho, toggleDone, type StoredState, type Task } from '../core/task';
 import { clearDone, dropQuadrant, removeOne, restore, type Removal, type RemovalRecord } from '../core/undo';
 import { validateTitle, type Result } from '../core/validate';
-import { renderBanner } from './banner';
+import { downloadText, safeFilename } from '../io/download';
+import { backupReminder, renderBackupStatus } from './backup';
+import { lostChangesWarning, renderBanner, type Notice } from './banner';
 import { START, paintSquares, renderPrompt, squareClasses, triageKey, type Triage } from './capture';
 import { isComposing, resolveKey, type KeyAction } from './keys';
 import { reorderVisible } from './order';
@@ -27,6 +29,9 @@ export type App = {
   getState(): StoredState;
   /**
    * Applies a core op to the tasks, saves, and re-renders. On failure nothing changes.
+   * An op that leaves the tasks as they were (ignoring updatedAt) saves nothing. When the save
+   * finds another tab has saved since, nothing is written: the tab reloads from storage, the
+   * banner says how many changes were lost, and the result is a failure.
    * `focusId` moves focus to that task after the render (focus follows the task).
    * `render: false` saves without re-rendering, for edits to a field the user is still in.
    * T7-T10 add their features by calling this.
@@ -50,19 +55,33 @@ export type App = {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+export const UPDATED_ELSEWHERE = 'Updated from another tab';
+export const NOT_SAVED_CONFLICT = "Changed in another tab, so this wasn't saved. Try again.";
+
 export function createApp({ root, storage, now, newId, timers = browserTimers }: AppOptions): App {
   const doc = root.ownerDocument;
   const shell = buildShell(root);
-  const loaded = storage.load();
-  let state: StoredState = loaded.state;
-  const loadWarning = loaded.warning;
+  let state: StoredState = { version: 1, rev: 0, tasks: [] }; // replaced by the first load, below
+  /** The latest load's warning; replaced on every reload. */
+  let loadWarning: string | undefined;
+  /** Unreadable stored data, once seen, stays on offer for the session, even across reloads. */
+  let rawNotice: Notice | undefined;
+  /** The latest failed save's error; cleared by a successful save or a reload. */
   let saveWarning: string | undefined;
+  /** Changes a reload discarded; shown until the next successful save. */
+  let lostWarning: string | undefined;
+  /** Commits since the last successful save, which a reload would discard. */
+  let unsaved = 0;
+  /** Counts reloads, so a caller can tell its commit ended in one. */
+  let reloads = 0;
+  let shownNotices: Notice[] = [];
 
   let triage: Triage | undefined;
   let review: Review | undefined;
   let reviewReturnId: string | undefined;
   let renderedToday = '';
-  let dueStale = false;
+  /** A render was put off while the user was typing in a task's field. */
+  let renderStale = false;
   let midnightTimer: unknown;
   let pendingTitle = '';
   let editing: Editing | undefined;
@@ -76,19 +95,80 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
   /** The local calendar day, from the injected clock. */
   const today = () => localToday(new Date(now()));
 
-  function updateBanner() {
-    renderBanner(shell.banner, saveWarning ?? loadWarning);
+  /** Every current warning, once each; a notice with the raw data keeps its download. */
+  function notices(): Notice[] {
+    const list: Notice[] = [];
+    const candidates: (Notice | undefined)[] = [
+      lostWarning === undefined ? undefined : { text: lostWarning },
+      saveWarning === undefined ? undefined : { text: saveWarning },
+      rawNotice,
+      loadWarning === undefined ? undefined : { text: loadWarning },
+    ];
+    for (const n of candidates) {
+      if (!n) continue;
+      const same = list.find((x) => x.text === n.text);
+      if (!same) list.push({ ...n });
+      else if (same.raw === undefined && n.raw !== undefined) same.raw = n.raw;
+    }
+    return list;
   }
 
-  function persist() {
+  function updateBanner() {
+    shownNotices = notices();
+    renderBanner(shell.banner, shownNotices);
+  }
+
+  function updateBackupStatus() {
+    renderBackupStatus(shell.backupStatus, backupReminder(state.lastExportAt, new Date(now())));
+  }
+
+  /** Takes a load's state and warnings. Returns how many unsaved changes it discarded. */
+  function applyLoad(res: LoadResult): number {
+    const lost = unsaved;
+    state = res.state;
+    loadWarning = res.warning;
+    if (res.raw !== undefined && res.warning !== undefined) rawNotice = { text: res.warning, raw: res.raw };
+    saveWarning = undefined;
+    unsaved = 0;
+    if (lost > 0) lostWarning = lostChangesWarning(lost);
+    if (editing && !taskOf(editing.id)) editing = undefined;
+    updateBanner();
+    updateBackupStatus();
+    return lost;
+  }
+
+  function reloadFromStorage(): number {
+    reloads++;
+    return applyLoad(storage.load());
+  }
+
+  /** Saves the current state. A conflict reloads from storage instead of writing. */
+  function persist(): 'saved' | 'failed' | 'reloaded' {
     const res = storage.save(state);
     if (res.ok) {
       state = { ...state, rev: res.rev };
+      unsaved = 0;
       saveWarning = undefined;
-    } else {
-      saveWarning = res.error; // state stays in memory; T10 refines this
+      lostWarning = undefined;
+      updateBanner();
+      return 'saved';
     }
+    unsaved++;
+    if (res.reason === 'conflict') {
+      reloadFromStorage();
+      return 'reloaded';
+    }
+    saveWarning = res.error; // the change stays in memory; the banner says it isn't saved
     updateBanner();
+    return 'failed';
+  }
+
+  /** Another tab changed the data: take it, and say so. */
+  function onExternalChange() {
+    const lost = reloadFromStorage();
+    if (lost === 0) toaster.announce(UPDATED_ELSEWHERE);
+    renderSoon();
+    if (review) syncReview();
   }
 
   function focusRow(id: string) {
@@ -107,20 +187,39 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
       if (t) tabStops[quadrantOf(t)] = focusId;
     }
     renderedToday = today();
-    dueStale = false;
+    renderStale = false;
     renderBoard(shell, state.tasks, { tabStops, editing, today: renderedToday });
+    updateBackupStatus();
     if (id) focusRow(id);
   }
 
-  function commit(op: (tasks: Task[]) => Result<Task[]>, opts: { focusId?: string; render?: boolean } = {}) {
+  /**
+   * Renders now, unless the user is typing in a field of a task that still exists: then on
+   * focusout, so a reload never wipes a half-typed date or name.
+   */
+  function renderSoon() {
+    const id = rowOf(doc.activeElement)?.dataset.taskId;
+    if (inTaskField() && id && taskOf(id)) {
+      renderStale = true;
+      return;
+    }
+    render();
+  }
+
+  function commit(
+    op: (tasks: Task[]) => Result<Task[]>,
+    opts: { focusId?: string; render?: boolean } = {},
+  ): Result<Task[]> {
     const result = op(state.tasks);
     if (!result.ok) return result;
-    if (result.value === state.tasks) return result; // the op changed nothing: no save, no render
+    if (sameTasks(state.tasks, result.value)) return result; // changed nothing: no save, no render
     state = { ...state, tasks: result.value };
-    persist();
-    if (opts.render !== false) render(opts.focusId);
+    const saved = persist();
+    if (saved === 'reloaded') {
+      render(opts.focusId && taskOf(opts.focusId) ? opts.focusId : undefined);
+    } else if (opts.render !== false) render(opts.focusId);
     if (review) syncReview();
-    return result;
+    return saved === 'reloaded' ? { ok: false, error: NOT_SAVED_CONFLICT } : result;
   }
 
   function focusCapture() {
@@ -240,9 +339,10 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
 
   /** Re-renders when the local day has changed, unless the user is in a field (then on focusout). */
   function recheckDue() {
+    updateBackupStatus();
     if (today() === renderedToday) return;
     if (inTaskField()) {
-      dueStale = true;
+      renderStale = true;
       return;
     }
     render();
@@ -299,8 +399,9 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     const trimmed = validateTitle(current.draft);
     if (trimmed.ok && trimmed.value === task.title) return cancelRename();
     editing = undefined;
+    const before = reloads;
     const result = commit((tasks) => rename(tasks, current.id, current.draft, now()), { focusId: current.id });
-    if (!result.ok) {
+    if (!result.ok && reloads === before) {
       editing = { ...current, error: result.error };
       const msg = findRow(current.id)?.querySelector('.task__error');
       if (msg) msg.textContent = result.error;
@@ -333,7 +434,9 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     const focusId = anchor ? survivorNear(anchor, ids) : undefined;
     if (editing && ids.has(editing.id)) editing = undefined;
 
+    const before = reloads;
     commit(() => ({ ok: true, value: removal.tasks }), { focusId });
+    if (reloads !== before) return false; // refused as stale: nothing was removed, so no undo
 
     const active = doc.activeElement;
     const lost = !(active instanceof HTMLElement) || active === doc.body || active.hidden || !active.isConnected;
@@ -349,7 +452,7 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     const next = restore(state.tasks, record);
     const backIds = new Set(back.map((t) => t.id));
     const first = QUADRANTS.map((q) => sortedFor(next, q.id).find((t) => backIds.has(t.id))).find(Boolean);
-    commit(() => ({ ok: true, value: next }), { focusId: first?.id });
+    if (!commit(() => ({ ok: true, value: next }), { focusId: first?.id }).ok) return;
     toaster.show(back.length === 1 ? `Restored '${back[0]!.title}'` : `Restored ${back.length} tasks`);
   }
 
@@ -479,6 +582,11 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     else moveTask(id, t.dataset.move as Quadrant);
   }, opts);
   shell.clearDone.addEventListener('click', () => void clearDoneTasks(), opts);
+  shell.banner.addEventListener('click', (event) => {
+    const button = event.target instanceof Element ? event.target.closest<HTMLElement>('.banner__download') : null;
+    const raw = button ? shownNotices[Number(button.dataset.notice)]?.raw : undefined;
+    if (raw !== undefined) downloadText(raw, safeFilename('eisenhower-unreadable', now(), 'json'));
+  }, opts);
   shell.dropAll.addEventListener('click', () => void dropAll(), opts);
   root.addEventListener('focusin', (event) => {
     const row = rowOf(event.target);
@@ -491,7 +599,7 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
   root.addEventListener('focusout', (event) => {
     const next = event.relatedTarget;
     const stillInField = next instanceof Element && next.matches('.task__when, .task__who, .task__edit');
-    if (dueStale && !stillInField) render(); // activeElement may not have moved yet, so not recheckDue()
+    if (renderStale && !stillInField) render(); // activeElement may not have moved yet, so not recheckDue()
   }, opts);
   doc.addEventListener('keydown', onDocKeydown, opts);
   doc.addEventListener('visibilitychange', () => {
@@ -500,8 +608,9 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     armMidnight(); // a sleeping machine can leave the timer late
   }, opts);
 
+  applyLoad(storage.load());
+  const unsubscribe = storage.subscribe(onExternalChange);
   renderPrompt(shell.prompt, undefined);
-  updateBanner();
   render();
   armMidnight();
 
@@ -517,6 +626,7 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     shell,
     destroy: () => {
       listening.abort();
+      unsubscribe();
       toaster.clear();
       if (midnightTimer !== undefined) timers.clearTimeout(midnightTimer);
     },
