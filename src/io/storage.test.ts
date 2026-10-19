@@ -153,14 +153,16 @@ describe('localStorage throws on read or write', () => {
     expect(port.save(stateAt(0))).toMatchObject({ ok: false, mode: 'memory', reason: 'unavailable' });
   });
 
-  it.each<[string, unknown]>([
-    ['QuotaExceededError', quota()],
-    ['Firefox NS_ERROR_DOM_QUOTA_REACHED', new DOMException('full', 'NS_ERROR_DOM_QUOTA_REACHED')],
-    ['SecurityError', new DOMException('denied', 'SecurityError')],
-    ['a plain Error', new Error('weird')],
-    ['a TypeError', new TypeError('weird')],
-    ['a thrown string', 'weird'],
-  ])('any setItem throw is a failed save: %s', (_label, error) => {
+  it.each<[string, unknown, string]>([
+    ['QuotaExceededError', quota(), WARNINGS.full],
+    ['Firefox NS_ERROR_DOM_QUOTA_REACHED', new DOMException('full', 'NS_ERROR_DOM_QUOTA_REACHED'), WARNINGS.full],
+    ['a legacy quota code 22', Object.assign(new Error('full'), { code: 22 }), WARNINGS.full],
+    ['SecurityError', new DOMException('denied', 'SecurityError'), WARNINGS.blocked],
+    ['a plain Error', new Error('weird'), WARNINGS.blocked],
+    ['a TypeError', new TypeError('weird'), WARNINGS.blocked],
+    ['a thrown string', 'weird', WARNINGS.blocked],
+    ['a thrown null-prototype object', Object.create(null), WARNINGS.blocked],
+  ])('any setItem throw is a failed save: %s', (_label, error, warning) => {
     const { ls, port } = setup({ [MAIN_KEY]: serialize(stateAt(4)) });
     port.load();
     ls.failSet = () => error;
@@ -168,7 +170,7 @@ describe('localStorage throws on read or write', () => {
       ok: false,
       mode: 'memory',
       reason: 'unavailable',
-      error: WARNINGS.blocked,
+      error: warning,
     });
     expect(ls.data.get(MAIN_KEY)).toBe(serialize(stateAt(4)));
   });

@@ -13,6 +13,7 @@ export const BACKUP_PREFIX = 'eisenhower:backup:';
 /** Banner text. Plain words; the first three are the plan's own. */
 export const WARNINGS = {
   blocked: 'Not saving: your browser is blocking storage. Export before closing.',
+  full: 'Not saving: browser storage is full. Export your tasks, then clear some space.',
   newer: 'Saved by a newer version. Reload the page.',
   conflict: "Changed in another tab. Your last change wasn't saved.",
   corruptBackedUp:
@@ -137,9 +138,9 @@ export function createBrowserStorage({
     if (lock) {
       return { ok: false, mode, reason: lock.mode === 'readonly' ? 'readonly' : 'unavailable', error: lock.warning };
     }
-    const unavailable = (): SaveResult => {
+    const unavailable = (error: string = WARNINGS.blocked): SaveResult => {
       mode = 'memory';
-      return { ok: false, mode, reason: 'unavailable', error: WARNINGS.blocked };
+      return { ok: false, mode, reason: 'unavailable', error };
     };
     const conflict = (): SaveResult => ({ ok: false, mode, reason: 'conflict', error: WARNINGS.conflict });
 
@@ -176,8 +177,8 @@ export function createBrowserStorage({
     const text = serialize({ ...state, rev });
     try {
       store.setItem(MAIN_KEY, text);
-    } catch {
-      return unavailable();
+    } catch (e) {
+      return unavailable(isQuotaError(e) ? WARNINGS.full : WARNINGS.blocked);
     }
     base = { raw: text, rev };
     guarded = null;
@@ -196,6 +197,13 @@ export function createBrowserStorage({
   }
 
   return { load, save, subscribe };
+}
+
+/** A full store, as each engine reports it. Anything else that throws counts as blocked. */
+function isQuotaError(e: unknown): boolean {
+  if (typeof e !== 'object' || e === null) return false;
+  const { name, code } = e as { name?: unknown; code?: unknown };
+  return name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED' || code === 22 || code === 1014;
 }
 
 function hasBackup(store: KeyValueStore, raw: string): boolean {
