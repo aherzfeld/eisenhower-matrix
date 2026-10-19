@@ -17,6 +17,9 @@ export type LoadResult = { state: StoredState; mode: StorageMode; warning?: stri
 /** conflict: another tab saved since our rev; load() again. unavailable: storage failed (memory mode). */
 export type SaveFailure = 'conflict' | 'readonly' | 'unavailable';
 
+/** ok: the copy is known to be stored. full: the store is out of space. failed: any other failure. */
+export type BackupResult = 'ok' | 'full' | 'failed';
+
 export type SaveResult =
   | { ok: true; mode: StorageMode; rev: number }
   | { ok: false; mode: StorageMode; reason: SaveFailure; error: string };
@@ -38,9 +41,10 @@ export interface StoragePort {
   subscribe(onExternalChange: () => void): () => void;
   /**
    * Keeps `text` under a new backup key named for `label` (import writes 'pre-import' before
-   * replacing the board). True only when the copy is known to be stored; any failure is false.
+   * replacing the board). 'ok' only when the copy is known to be stored. An adapter may then
+   * drop older backups of the same label, keeping a few, never the one just written.
    */
-  writeBackup(label: string, text: string): boolean;
+  writeBackup(label: string, text: string): BackupResult;
 }
 
 export function emptyState(): StoredState {
@@ -67,9 +71,9 @@ export function createMemoryStorage({
   return {
     backups,
     writeBackup(label, text) {
-      if (mode !== 'persistent') return false;
+      if (mode !== 'persistent') return 'failed';
       backups.push({ label, text });
-      return true;
+      return 'ok';
     },
     load: () => ({
       state: structuredClone(stored),

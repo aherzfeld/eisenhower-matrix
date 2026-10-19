@@ -44,6 +44,9 @@ class SharedStore implements KeyValueStore {
     this.writes.push(key);
     this.data.set(key, value);
   }
+  removeItem(key: string) {
+    this.data.delete(key);
+  }
 }
 
 const quota = () => new DOMException('full', 'QuotaExceededError');

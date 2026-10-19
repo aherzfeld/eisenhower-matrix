@@ -7,7 +7,7 @@ import { parse, serialize } from '../core/codec';
 import type { StoredState, Task } from '../core/task';
 import { BACKUP_PREFIX, MAIN_KEY, WARNINGS, createBrowserStorage, type KeyValueStore } from '../io/storage';
 import { createApp, type App } from './app';
-import { IMPORT_CONFLICT } from './transfer';
+import { BACKUP_FAILED, BACKUP_FULL, IMPORT_CONFLICT } from './transfer';
 
 const NOW = '2026-10-19T12:00:00.000Z';
 
@@ -26,6 +26,8 @@ const mine = (over: Partial<StoredState> = {}): StoredState => ({ version: 1, re
 class Store implements KeyValueStore {
   data = new Map<string, string>();
   failSet: ((key: string) => unknown) | null = null;
+  /** When set, a write that would take the stored keys and values past this many chars throws, as a full browser store does. */
+  cap: number | null = null;
   constructor(
     public log: string[],
     initial: Record<string, string> = {},
@@ -44,8 +46,24 @@ class Store implements KeyValueStore {
   setItem(key: string, value: string) {
     const e = this.failSet?.(key);
     if (e) throw e;
+    if (this.cap !== null && this.size() - this.sizeOf(key) + key.length + value.length > this.cap) {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    }
     this.log.push(`write ${key}`);
     this.data.set(key, value);
+  }
+  removeItem(key: string) {
+    this.log.push(`remove ${key}`);
+    this.data.delete(key);
+  }
+  size() {
+    let n = 0;
+    for (const k of this.data.keys()) n += this.sizeOf(k);
+    return n;
+  }
+  private sizeOf(key: string) {
+    const v = this.data.get(key);
+    return v === undefined ? 0 : key.length + v.length;
   }
 }
 
@@ -267,7 +285,10 @@ describe('import (AC6)', () => {
     await tab.app.importFile(theirFile());
     replaceButton(tab).click();
 
-    expect(errorText(tab)).toBe("Nothing was imported: your current tasks couldn't be backed up first.");
+    expect(errorText(tab)).toBe(
+      "Browser storage is full, so your current tasks couldn't be backed up and nothing was imported. Export your tasks, then clear some space.",
+    );
+    expect(errorText(tab)).toBe(BACKUP_FULL);
     expect(panel(tab)).not.toBeNull();
     expect(tab.log).toEqual([]);
     expect(tab.ls.data.get(MAIN_KEY)).toBe(before);
@@ -275,13 +296,31 @@ describe('import (AC6)', () => {
     expect(tab.app.getState().tasks).toStrictEqual(MINE);
   });
 
-  it('a backup write that throws something odd also aborts', async () => {
+  it.each([
+    ['something odd', () => 'boom'],
+    ['a SecurityError', () => new DOMException('denied', 'SecurityError')],
+  ])('a backup write that throws %s also aborts, with the generic message', async (_name, error) => {
     const tab = seeded();
-    tab.ls.failSet = (key) => key.startsWith(BACKUP_PREFIX) && 'boom';
+    const before = new Map(tab.ls.data);
+    tab.ls.failSet = (key) => key.startsWith(BACKUP_PREFIX) && error();
     await tab.app.importFile(theirFile());
     replaceButton(tab).click();
     expect(tab.app.getState().tasks).toStrictEqual(MINE);
-    expect(errorText(tab)).toContain("couldn't be backed up");
+    expect(errorText(tab)).toBe("Nothing was imported: your current tasks couldn't be backed up first.");
+    expect(errorText(tab)).toBe(BACKUP_FAILED);
+    expect(tab.ls.data).toEqual(before);
+  });
+
+  it('a backup that does not read back aborts with the generic message', async () => {
+    const tab = seeded();
+    const before = tab.ls.data.get(MAIN_KEY);
+    const setItem = tab.ls.setItem.bind(tab.ls);
+    tab.ls.setItem = (key, value) => setItem(key, key.startsWith(BACKUP_PREFIX) ? value.slice(1) : value);
+    await tab.app.importFile(theirFile());
+    replaceButton(tab).click();
+    expect(errorText(tab)).toBe(BACKUP_FAILED);
+    expect(tab.ls.data.get(MAIN_KEY)).toBe(before);
+    expect(tab.app.getState().tasks).toStrictEqual(MINE);
   });
 
   it('Cancel changes nothing', async () => {
@@ -519,5 +558,64 @@ describe('the confirmation panel is modal', () => {
     expect(panel(tab)).not.toBeNull();
     cancelButton(tab).click();
     expect(tab.app.undo()).toBe(true); // Ctrl+Z was not spent while the panel was open
+  });
+});
+
+describe('pre-import backup retention (#11)', () => {
+  const preImportKeys = (ls: Store) => [...ls.data.keys()].filter((k) => k.startsWith(`${BACKUP_PREFIX}pre-import:`));
+  const minute = () => clock.setTime(clock.getTime() + 60_000);
+
+  it("the issue's scenario: a store capped at its starting size + 2,500 chars takes 8 imports in a row", async () => {
+    const other = { 'other-app:x': 'theirs', [`${BACKUP_PREFIX}2026-10-01T00:00:00.000Z`]: 'corrupt {' };
+    const tab = openTab({ [MAIN_KEY]: serialize(mine()), ...other });
+    tab.ls.cap = tab.ls.size() + 2_500;
+    const boards = [THEIRS, MINE];
+    for (let i = 0; i < 8; i++) {
+      minute();
+      const incoming = boards[i % 2]!;
+      await tab.app.importFile(fileOf(serialize({ version: 1, rev: 0, tasks: incoming }), `board-${i}.json`));
+      replaceButton(tab).click();
+      expect(errorText(tab), `import ${i}`).toBe('');
+      expect(panel(tab), `import ${i}`).toBeNull();
+      expect(tab.toast(), `import ${i}`).toContain(`Imported ${incoming.length} tasks`);
+      expect(tab.toast(), `import ${i}`).not.toContain("aren't saved");
+      expect(tab.app.getState().tasks).toStrictEqual(incoming);
+      expect(preImportKeys(tab.ls).length, `import ${i}`).toBeLessThanOrEqual(3);
+      expect(tab.ls.size()).toBeLessThanOrEqual(tab.ls.cap);
+    }
+    expect(preImportKeys(tab.ls)).toHaveLength(3);
+    for (const [k, v] of Object.entries(other)) expect(tab.ls.data.get(k)).toBe(v);
+    expect(tab.root.querySelectorAll('.banner')).toHaveLength(0);
+  });
+
+  it('prunes only after the new backup is written, and before the board is replaced', async () => {
+    const old = (m: number) => `${BACKUP_PREFIX}pre-import:${new Date(clock.getTime() - m * 60_000).toISOString()}`;
+    const tab = openTab({ [MAIN_KEY]: serialize(mine()), [old(3)]: 'a', [old(2)]: 'b', [old(1)]: 'c' });
+    await tab.app.importFile(theirFile());
+    replaceButton(tab).click();
+    const backupKey = `${BACKUP_PREFIX}pre-import:${clock.toISOString()}`;
+    expect(tab.log).toEqual([
+      `write ${backupKey}`,
+      `remove ${old(3)}`,
+      'download eisenhower-2026-10-19.json',
+      `write ${MAIN_KEY}`,
+    ]);
+    expect(preImportKeys(tab.ls).sort()).toEqual([old(2), old(1), backupKey].sort());
+  });
+
+  it('a removeItem that throws does not stop the import', async () => {
+    const old = (m: number) => `${BACKUP_PREFIX}pre-import:${new Date(clock.getTime() - m * 60_000).toISOString()}`;
+    const tab = openTab({ [MAIN_KEY]: serialize(mine()), [old(3)]: 'a', [old(2)]: 'b', [old(1)]: 'c', 'other-app:x': 'x' });
+    tab.ls.removeItem = () => {
+      throw new DOMException('denied', 'SecurityError');
+    };
+    await tab.app.importFile(theirFile());
+    replaceButton(tab).click();
+    expect(tab.app.getState().tasks).toStrictEqual(THEIRS);
+    expect(tab.toast()).toContain('Imported 3 tasks');
+    expect(errorText(tab)).toBe('');
+    for (const [k, v] of Object.entries({ [old(3)]: 'a', [old(2)]: 'b', [old(1)]: 'c', 'other-app:x': 'x' })) {
+      expect(tab.ls.data.get(k)).toBe(v);
+    }
   });
 });

@@ -1,8 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { parse, serialize } from '../core/codec';
-import { emptyState, type StoragePort } from '../core/ports';
+import { emptyState, type BackupResult, type StoragePort } from '../core/ports';
 import type { StoredState, Task } from '../core/task';
-import { MAIN_KEY, WARNINGS, createBrowserStorage, type BrowserStorageOptions } from './storage';
+import {
+  MAIN_KEY,
+  PRE_IMPORT_KEEP,
+  WARNINGS,
+  createBrowserStorage,
+  preImportBackupsToPrune,
+  type BrowserStorageOptions,
+} from './storage';
 
 const NOW = Date.parse('2026-10-19T12:00:00.000Z');
 const TS = '2026-10-19T12:00:00.000Z';
@@ -27,6 +34,8 @@ class StubStorage {
   writes: string[] = [];
   failGet: ((key: string) => unknown) | null = null;
   failSet: ((key: string) => unknown) | null = null;
+  failRemove: ((key: string) => unknown) | null = null;
+  removes: string[] = [];
   constructor(initial: Record<string, string> = {}) {
     for (const [k, v] of Object.entries(initial)) this.data.set(k, v);
   }
@@ -46,6 +55,12 @@ class StubStorage {
     if (e !== undefined && e !== null && e !== false) throw e;
     this.writes.push(key);
     this.data.set(key, String(value));
+  }
+  removeItem(key: string): void {
+    const e = this.failRemove?.(key);
+    if (e !== undefined && e !== null && e !== false) throw e;
+    this.removes.push(key);
+    this.data.delete(key);
   }
 }
 
@@ -511,7 +526,7 @@ describe('writeBackup (pre-import backup, T11)', () => {
   it('writes the text to a labelled, timestamped backup key and leaves the main key alone', () => {
     const { ls, port } = setup({ [MAIN_KEY]: serialize(stateAt(1)) });
     port.load();
-    expect(port.writeBackup('pre-import', 'current')).toBe(true);
+    expect(port.writeBackup('pre-import', 'current')).toBe('ok');
     expect(ls.writes).toEqual([PRE_IMPORT_KEY]);
     expect(ls.data.get(PRE_IMPORT_KEY)).toBe('current');
     expect(ls.data.get(MAIN_KEY)).toBe(serialize(stateAt(1)));
@@ -520,22 +535,31 @@ describe('writeBackup (pre-import backup, T11)', () => {
   it('writes a fresh key every time, never overwriting an earlier backup', () => {
     const { ls, port } = setup({ [PRE_IMPORT_KEY]: 'older' });
     port.load();
-    expect(port.writeBackup('pre-import', 'current')).toBe(true);
+    expect(port.writeBackup('pre-import', 'current')).toBe('ok');
     expect(ls.data.get(PRE_IMPORT_KEY)).toBe('older');
     expect(ls.data.get(`${PRE_IMPORT_KEY}-1`)).toBe('current');
-    expect(port.writeBackup('pre-import', 'current')).toBe(true);
+    expect(port.writeBackup('pre-import', 'current')).toBe('ok');
     expect(ls.data.get(`${PRE_IMPORT_KEY}-2`)).toBe('current');
   });
 
-  it.each([
-    ['a quota error', quota],
-    ['a SecurityError', () => new DOMException('denied', 'SecurityError')],
-    ['an odd thrown value', () => 'boom'],
-  ])('any setItem throw counts as failure: %s', (_name, error) => {
+  it('never reuses a freed key: a new backup always sorts after every existing one with its timestamp', () => {
+    const { ls, port } = setup({ [`${PRE_IMPORT_KEY}-2`]: 'older', [`${PRE_IMPORT_KEY}-10`]: 'old' });
+    port.load();
+    expect(port.writeBackup('manual', 'x')).toBe('ok');
+    expect(port.writeBackup('pre-import', 'current')).toBe('ok');
+    expect(ls.writes).toEqual([`eisenhower:backup:manual:${TS}`, `${PRE_IMPORT_KEY}-11`]);
+    expect(ls.data.get(PRE_IMPORT_KEY)).toBeUndefined();
+  });
+
+  it.each<[string, () => unknown, BackupResult]>([
+    ['a quota error', quota, 'full'],
+    ['a SecurityError', () => new DOMException('denied', 'SecurityError'), 'failed'],
+    ['an odd thrown value', () => 'boom', 'failed'],
+  ])('any setItem throw counts as failure: %s', (_name, error, result) => {
     const { ls, port } = setup();
     port.load();
     ls.failSet = () => error();
-    expect(port.writeBackup('pre-import', 'current')).toBe(false);
+    expect(port.writeBackup('pre-import', 'current')).toBe(result);
     expect(ls.data.size).toBe(0);
   });
 
@@ -543,7 +567,7 @@ describe('writeBackup (pre-import backup, T11)', () => {
     const { ls, port } = setup();
     port.load();
     ls.failGet = () => new DOMException('denied', 'SecurityError');
-    expect(port.writeBackup('pre-import', 'current')).toBe(false);
+    expect(port.writeBackup('pre-import', 'current')).toBe('failed');
   });
 
   it('fails when the write does not read back', () => {
@@ -551,14 +575,232 @@ describe('writeBackup (pre-import backup, T11)', () => {
     port.load();
     const setItem = ls.setItem.bind(ls);
     ls.setItem = (key, value) => setItem(key, value.slice(1));
-    expect(port.writeBackup('pre-import', 'current')).toBe(false);
+    expect(port.writeBackup('pre-import', 'current')).toBe('failed');
+  });
+
+  it('fails rather than overwrite when the next suffix is already taken (suffix at the safe-integer limit)', () => {
+    const top = `${PRE_IMPORT_KEY}-${Number.MAX_SAFE_INTEGER}`;
+    const { ls, port } = setup({ [`${PRE_IMPORT_KEY}-${Number.MAX_SAFE_INTEGER - 1}`]: 'a', [top]: 'b' });
+    port.load();
+    expect(port.writeBackup('pre-import', 'current')).toBe('failed');
+    expect(ls.data.get(top)).toBe('b');
+    expect(ls.writes).toEqual([]);
   });
 
   it('writes nothing in read-only mode (data from a newer version)', () => {
     const newer = JSON.stringify({ version: 2, rev: 0, tasks: [] });
     const { ls, port } = setup({ [MAIN_KEY]: newer });
     expect(port.load().mode).toBe('readonly');
-    expect(port.writeBackup('pre-import', 'current')).toBe(false);
+    expect(port.writeBackup('pre-import', 'current')).toBe('failed');
     expect(ls.writes).toEqual([]);
+  });
+});
+
+describe('preImportBackupsToPrune (#11)', () => {
+  const PRE = 'eisenhower:backup:pre-import:';
+  const at = (minute: number, suffix = '') => `${PRE}2026-10-19T12:${String(minute).padStart(2, '0')}:00.000Z${suffix}`;
+
+  it('keeps the newest, counting the one just written, and returns the rest', () => {
+    const keys = [at(1), at(2), at(3), at(4), at(5)];
+    expect(preImportBackupsToPrune(keys, at(5), 3).sort()).toEqual([at(1), at(2)]);
+  });
+
+  it('orders by the parsed timestamp, never by the order the keys arrive in', () => {
+    const keys = [at(4), at(1), at(5), at(3), at(2)];
+    expect(preImportBackupsToPrune(keys, at(5), 3).sort()).toEqual([at(1), at(2)]);
+    expect(preImportBackupsToPrune([...keys].reverse(), at(5), 3).sort()).toEqual([at(1), at(2)]);
+  });
+
+  it('orders the same timestamp by its -N suffix, numerically', () => {
+    const keys = [at(0, '-10'), at(0, '-2'), at(0), at(0, '-1'), at(0, '-11')];
+    expect(preImportBackupsToPrune(keys, at(0, '-11'), 3).sort()).toEqual([at(0), at(0, '-1')]);
+    // Two backups with the same timestamp: the suffixed one is newer.
+    expect(preImportBackupsToPrune([at(0, '-1'), at(0)], at(0, '-1'), 1)).toEqual([at(0)]);
+    // A later timestamp beats any suffix.
+    expect(preImportBackupsToPrune([at(1), at(0, '-9')], at(1), 1)).toEqual([at(0, '-9')]);
+    // Where text order and number order disagree (-9 > -10 as text), number order wins.
+    expect(preImportBackupsToPrune([at(0, '-9'), at(0, '-10'), at(0, '-11')], at(0, '-11'), 2)).toEqual([at(0, '-9')]);
+  });
+
+  it('never selects the key just written, even when its timestamp is the oldest (clock moved back)', () => {
+    const keys = [at(1), at(2), at(3), at(4), at(0)];
+    expect(preImportBackupsToPrune(keys, at(0), 3).sort()).toEqual([at(1), at(2)]);
+  });
+
+  it('returns nothing while there are no more than `keep` backups', () => {
+    expect(preImportBackupsToPrune([at(1), at(2), at(3)], at(3), 3)).toEqual([]);
+    expect(preImportBackupsToPrune([at(1)], at(1), 3)).toEqual([]);
+  });
+
+  it('only ever selects keys that parse exactly as a pre-import backup', () => {
+    const others = [
+      MAIN_KEY,
+      `eisenhower:backup:${TS}`,
+      `eisenhower:backup:${TS}-1`,
+      `eisenhower:backup:pre-v1:${TS}`,
+      `eisenhower:backup:pre-v2:${TS}-3`,
+      'other-app:x',
+      `other-app:${PRE}2026-10-19T11:00:00.000Z`,
+      `eisenhower:backup:pre-importX:2026-10-19T11:00:00.000Z`,
+      `eisenhower:backup:pre-import-2026-10-19T11:00:00.000Z`,
+      `${PRE}`,
+      `${PRE}not-a-date`,
+      `${PRE}2026-10-19`,
+      `${PRE}2026-10-19T11:00:00Z`,
+      `${PRE}2026-13-45T11:00:00.000Z`,
+      `${PRE}2026-02-30T11:00:00.000Z`,
+      `${PRE}2026-10-19T11:00:00.000Z-0`,
+      `${PRE}2026-10-19T11:00:00.000Z-01`,
+      `${PRE}2026-10-19T11:00:00.000Z-x`,
+      `${PRE}2026-10-19T11:00:00.000Z-99999999999999999999`,
+      `${PRE}x2026-10-19T11:00:00.000Z`,
+      `${PRE}12026-10-19T11:00:00.000Z`,
+      `${PRE}2026-10-19T11:00:00.000Z:extra`,
+      `${PRE}2026-10-19T11:00:00.000Z `,
+      ` ${PRE}2026-10-19T11:00:00.000Z`,
+      `${PRE.toUpperCase()}2026-10-19T11:00:00.000Z`,
+    ];
+    const old = [at(1), at(2, '-1')];
+    expect(preImportBackupsToPrune([...others, ...old, at(9)], at(9), 1).sort()).toEqual(old.sort());
+    expect(preImportBackupsToPrune(others, at(9), 1)).toEqual([]);
+  });
+});
+
+describe('pre-import backup retention in writeBackup (#11)', () => {
+  const PRE = 'eisenhower:backup:pre-import:';
+  const MAIN = serialize(stateAt(1));
+  /** Present throughout: none of these may change. */
+  const OTHERS: Record<string, string> = {
+    [BACKUP_KEY]: 'corrupt {',
+    [MIGRATION_KEY]: '{"version":0,"tasks":[]}',
+    'other-app:x': 'theirs',
+    'eisenhower:backup:pre-importX:2026-10-19T11:00:00.000Z': 'near miss',
+  };
+
+  function retention(initial: Record<string, string> = {}) {
+    let t = NOW;
+    const env = setup({ [MAIN_KEY]: MAIN, ...OTHERS, ...initial }, { now: () => t });
+    env.port.load();
+    const tick = () => (t += 60_000);
+    const preImportKeys = () => [...env.ls.data.keys()].filter((k) => k.startsWith(PRE)).sort();
+    const untouched = () => {
+      expect(env.ls.data.get(MAIN_KEY)).toBe(MAIN);
+      for (const [k, v] of Object.entries(OTHERS)) expect(env.ls.data.get(k)).toBe(v);
+    };
+    return { ...env, tick, preImportKeys, untouched };
+  }
+  const key = (minutes: number, suffix = '') => `${PRE}${new Date(NOW + minutes * 60_000).toISOString()}${suffix}`;
+
+  it(`keeps ${PRE_IMPORT_KEEP}`, () => {
+    expect(PRE_IMPORT_KEEP).toBe(3);
+  });
+
+  it('after 5 imports exactly the newest 3 remain, and every other key is byte-identical', () => {
+    const { ls, port, tick, preImportKeys, untouched } = retention();
+    for (let i = 0; i < 5; i++) {
+      expect(port.writeBackup('pre-import', `board ${i}`)).toBe('ok');
+      tick();
+    }
+    expect(preImportKeys()).toEqual([key(2), key(3), key(4)]);
+    expect(ls.data.get(key(4))).toBe('board 4');
+    expect(ls.data.get(key(2))).toBe('board 2');
+    expect(ls.removes.sort()).toEqual([key(0), key(1)]);
+    untouched();
+  });
+
+  it('with the same timestamp, the -N suffix decides which are newest', () => {
+    const { ls, port, preImportKeys, untouched } = retention();
+    for (let i = 0; i < 5; i++) expect(port.writeBackup('pre-import', `board ${i}`)).toBe('ok');
+    expect(preImportKeys()).toEqual([key(0, '-2'), key(0, '-3'), key(0, '-4')]);
+    expect(ls.data.get(key(0, '-4'))).toBe('board 4');
+    untouched();
+  });
+
+  it('removes backups left by earlier sessions, oldest first by timestamp', () => {
+    const { port, preImportKeys, untouched } = retention({
+      [key(-3)]: 'b',
+      [key(-60)]: 'a',
+      [key(-2)]: 'c',
+      [key(-1)]: 'd',
+    });
+    expect(port.writeBackup('pre-import', 'now')).toBe('ok');
+    expect(preImportKeys()).toEqual([key(-2), key(-1), key(0)]);
+    untouched();
+  });
+
+  it('prunes only after a pre-import backup, not after any other label', () => {
+    const { ls, port, untouched } = retention({ [key(-3)]: 'a', [key(-2)]: 'b', [key(-1)]: 'c' });
+    expect(port.writeBackup('manual', 'x')).toBe('ok');
+    expect(ls.removes).toEqual([]);
+    untouched();
+  });
+
+  it.each<[BackupResult, () => unknown]>([
+    ['full', quota],
+    ['failed', () => new DOMException('denied', 'SecurityError')],
+  ])('a failed backup write (%s) deletes nothing', (result, error) => {
+    const seed = { [key(-3)]: 'a', [key(-2)]: 'b', [key(-1)]: 'c' };
+    const { ls, port, untouched } = retention(seed);
+    const before = new Map(ls.data);
+    ls.failSet = () => error();
+    expect(port.writeBackup('pre-import', 'now')).toBe(result);
+    expect(ls.removes).toEqual([]);
+    expect(ls.data).toEqual(before);
+    untouched();
+  });
+
+  it('a backup that reads back different deletes nothing', () => {
+    const { ls, port, untouched } = retention({ [key(-3)]: 'a', [key(-2)]: 'b', [key(-1)]: 'c' });
+    const setItem = ls.setItem.bind(ls);
+    ls.setItem = (k, v) => setItem(k, v.slice(1));
+    expect(port.writeBackup('pre-import', 'now')).toBe('failed');
+    expect(ls.removes).toEqual([]);
+    for (const [k, v] of Object.entries({ [key(-3)]: 'a', [key(-2)]: 'b', [key(-1)]: 'c' })) {
+      expect(ls.data.get(k)).toBe(v);
+    }
+    untouched();
+  });
+
+  it('a removeItem that throws still reports the backup as kept, and touches nothing else', () => {
+    const { ls, port, untouched } = retention({ [key(-3)]: 'a', [key(-2)]: 'b', [key(-1)]: 'c' });
+    ls.failRemove = () => new DOMException('denied', 'SecurityError');
+    expect(port.writeBackup('pre-import', 'now')).toBe('ok');
+    expect(ls.data.get(key(0))).toBe('now');
+    expect(ls.data.get(key(-3))).toBe('a');
+    expect(ls.removes).toEqual([]);
+    untouched();
+  });
+
+  it('a store that stops listing its keys once the backup is written still reports it as kept', () => {
+    const { ls, port, untouched } = retention({ [key(-3)]: 'a', [key(-2)]: 'b', [key(-1)]: 'c' });
+    const setItem = ls.setItem.bind(ls);
+    ls.setItem = (k, v) => {
+      setItem(k, v);
+      ls.key = () => {
+        throw new DOMException('denied', 'SecurityError');
+      };
+    };
+    expect(port.writeBackup('pre-import', 'now')).toBe('ok');
+    expect(ls.data.get(key(0))).toBe('now');
+    expect(ls.data.get(key(-3))).toBe('a');
+    untouched();
+  });
+
+  it('a store that cannot list its keys gets no backup, so nothing is deleted and the import aborts', () => {
+    const { ls, port, untouched } = retention({ [key(-3)]: 'a', [key(-2)]: 'b', [key(-1)]: 'c' });
+    const before = new Map(ls.data);
+    ls.key = () => {
+      throw new DOMException('denied', 'SecurityError');
+    };
+    expect(port.writeBackup('pre-import', 'now')).toBe('failed');
+    expect(ls.data).toEqual(before);
+    untouched();
+  });
+
+  it('a pre-import backup never stands in for the backup of unreadable data, since it may be pruned', () => {
+    const raw = 'not json {';
+    const { ls, port } = setup({ [MAIN_KEY]: raw, [`${PRE}2026-10-19T11:00:00.000Z`]: raw });
+    expect(port.load().warning).toBe(WARNINGS.corruptBackedUp);
+    expect(ls.data.get(BACKUP_KEY)).toBe(raw);
   });
 });
