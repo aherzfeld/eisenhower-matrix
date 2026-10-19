@@ -42,7 +42,7 @@ function inQuadrant(tasks: Task[], q: Quadrant): Task[] {
 }
 
 /** Renumbers every quadrant's order contiguously from 0, keeping relative order. */
-function normalizeOrders(tasks: Task[]): Task[] {
+export function normalizeOrders(tasks: Task[]): Task[] {
   const next = new Map<string, number>();
   for (const q of ['do', 'schedule', 'delegate', 'delete'] as const) {
     [...inQuadrant(tasks, q)]

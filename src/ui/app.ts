@@ -1,13 +1,15 @@
 /** The app controller: holds state, applies core ops, saves, re-renders, routes events. */
-import { flagsFor, quadrantOf, type Quadrant } from '../core/quadrant';
+import { QUADRANTS, flagsFor, quadrantOf, type Quadrant } from '../core/quadrant';
 import type { StoragePort } from '../core/ports';
 import { createTask, rename, setFlags, toggleDone, type StoredState, type Task } from '../core/task';
+import { clearDone, dropQuadrant, removeOne, restore, type Removal, type RemovalRecord } from '../core/undo';
 import { validateTitle, type Result } from '../core/validate';
 import { renderBanner } from './banner';
 import { START, paintSquares, renderPrompt, squareClasses, triageKey, type Triage } from './capture';
 import { isComposing, resolveKey, type KeyAction } from './keys';
 import { reorderVisible } from './order';
-import { buildShell, renderBoard, type Editing, type Shell } from './render';
+import { buildShell, renderBoard, sortedFor, type Editing, type Shell } from './render';
+import { browserTimers, createToaster, type Timers } from './toast';
 
 export type AppOptions = {
   root: HTMLElement;
@@ -15,6 +17,8 @@ export type AppOptions = {
   /** ISO timestamp. Injected so tests are deterministic. */
   now: () => string;
   newId: () => string;
+  /** For the undo toast's 5 s window. Defaults to the browser's timers. */
+  timers?: Timers;
 };
 
 export type App = {
@@ -26,12 +30,24 @@ export type App = {
    */
   commit(op: (tasks: Task[]) => Result<Task[]>, opts?: { focusId?: string }): Result<Task[]>;
   render(focusId?: string): void;
+  /**
+   * Removals save at once and show an undo toast. Each returns false when nothing was
+   * removed. A new removal replaces the toast, and its Undo covers only that removal.
+   */
+  deleteTask(id: string): boolean;
+  clearDone(): boolean;
+  /** Removes every task in the Delete quadrant. */
+  dropAll(): boolean;
+  /** Undoes the removal on the live toast. False once it has expired or been replaced. */
+  undo(): boolean;
   focusCapture(): void;
   shell: Shell;
   destroy(): void;
 };
 
-export function createApp({ root, storage, now, newId }: AppOptions): App {
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+export function createApp({ root, storage, now, newId, timers = browserTimers }: AppOptions): App {
   const doc = root.ownerDocument;
   const shell = buildShell(root);
   const loaded = storage.load();
@@ -170,6 +186,71 @@ export function createApp({ root, storage, now, newId }: AppOptions): App {
     }
   }
 
+  // ---- removal and undo ----
+
+  /**
+   * Where focus goes once `removed` is gone: the next row of the anchor's quadrant, else
+   * the previous one. Undefined means no row is left to take it.
+   */
+  function survivorNear(anchorId: string, removed: ReadonlySet<string>): string | undefined {
+    const anchor = taskOf(anchorId);
+    if (!anchor) return undefined;
+    const rows = sortedFor(state.tasks, quadrantOf(anchor));
+    const i = rows.findIndex((t) => t.id === anchorId);
+    const keep = (t: Task) => !removed.has(t.id);
+    return (rows.slice(i + 1).find(keep) ?? rows.slice(0, i).reverse().find(keep))?.id;
+  }
+
+  /** Applies a removal, saves, re-renders, moves focus and offers Undo. */
+  function removeWith(op: (tasks: Task[]) => Removal, message: (removed: Task[]) => string, anchorId?: string) {
+    const removal = op(state.tasks);
+    const { removed } = removal.record;
+    if (removed.length === 0) return false;
+    const ids = new Set(removed.map((t) => t.id));
+    const focusedId = rowOf(doc.activeElement)?.dataset.taskId;
+    const anchor = focusedId && ids.has(focusedId) ? focusedId : anchorId;
+    const focusId = anchor ? survivorNear(anchor, ids) : undefined;
+    if (editing && ids.has(editing.id)) editing = undefined;
+
+    commit(() => ({ ok: true, value: removal.tasks }), { focusId });
+
+    const active = doc.activeElement;
+    const lost = !(active instanceof HTMLElement) || active === doc.body || active.hidden || !active.isConnected;
+    if (!focusId && (anchor || lost)) focusCapture();
+    toaster.show(message(removed), () => undoRemoval(removal.record));
+    return true;
+  }
+
+  function undoRemoval(record: RemovalRecord) {
+    const present = new Set(state.tasks.map((t) => t.id));
+    const back = record.removed.filter((t) => !present.has(t.id));
+    if (back.length === 0) return;
+    const next = restore(state.tasks, record);
+    const backIds = new Set(back.map((t) => t.id));
+    const first = QUADRANTS.map((q) => sortedFor(next, q.id).find((t) => backIds.has(t.id))).find(Boolean);
+    commit(() => ({ ok: true, value: next }), { focusId: first?.id });
+    toaster.show(back.length === 1 ? `Restored '${back[0]!.title}'` : `Restored ${back.length} tasks`);
+  }
+
+  function deleteTask(id: string) {
+    return removeWith(
+      (tasks) => {
+        const r = removeOne(tasks, id);
+        return r.ok ? r.value : { tasks, record: { removed: [], sequences: {} } };
+      },
+      ([t]) => `Deleted '${t!.title}'`,
+      id,
+    );
+  }
+
+  function clearDoneTasks() {
+    return removeWith(clearDone, (r) => `Cleared ${plural(r.length, 'done task', 'done tasks')}`);
+  }
+
+  function dropAll() {
+    return removeWith((tasks) => dropQuadrant(tasks, 'delete'), (r) => `Dropped ${plural(r.length, 'task', 'tasks')}`);
+  }
+
   function moveTask(id: string, to: Quadrant) {
     commit((tasks) => setFlags(tasks, id, flagsFor(to), now()), { focusId: id });
   }
@@ -198,6 +279,9 @@ export function createApp({ root, storage, now, newId }: AppOptions): App {
       case 'reorder':
         event.preventDefault();
         return void commit((tasks) => reorderVisible(tasks, id, action.direction, now()), { focusId: id });
+      case 'remove':
+        event.preventDefault();
+        return void deleteTask(id);
       case 'toggleDone':
       case 'rename':
         // Only when the row itself has focus: on a button, Space/Enter must still click it.
@@ -220,6 +304,7 @@ export function createApp({ root, storage, now, newId }: AppOptions): App {
   // One signal removes every listener in destroy(); renders never add listeners (delegation).
   const listening = new AbortController();
   const opts = { signal: listening.signal };
+  const toaster = createToaster(shell.toast, timers, opts);
 
   shell.input.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || isComposing(event) || triage) return;
@@ -253,12 +338,15 @@ export function createApp({ root, storage, now, newId }: AppOptions): App {
     if (id) commit((tasks) => toggleDone(tasks, id, now()), { focusId: id });
   }, opts);
   root.addEventListener('click', (event) => {
-    const t = event.target instanceof Element ? event.target.closest<HTMLElement>('.task__move, .task__rename') : null;
+    const t = event.target instanceof Element ? event.target.closest<HTMLElement>('.task__move, .task__rename, .task__delete') : null;
     const id = rowOf(t)?.dataset.taskId;
     if (!t || !id) return;
     if (t.classList.contains('task__rename')) startRename(id);
+    else if (t.classList.contains('task__delete')) deleteTask(id);
     else moveTask(id, t.dataset.move as Quadrant);
   }, opts);
+  shell.clearDone.addEventListener('click', () => void clearDoneTasks(), opts);
+  shell.dropAll.addEventListener('click', () => void dropAll(), opts);
   root.addEventListener('focusin', (event) => {
     const row = rowOf(event.target);
     const id = row?.dataset.taskId;
@@ -278,7 +366,14 @@ export function createApp({ root, storage, now, newId }: AppOptions): App {
     commit,
     render,
     focusCapture,
+    deleteTask,
+    clearDone: clearDoneTasks,
+    dropAll,
+    undo: () => toaster.undo(),
     shell,
-    destroy: () => listening.abort(),
+    destroy: () => {
+      listening.abort();
+      toaster.clear();
+    },
   };
 }
