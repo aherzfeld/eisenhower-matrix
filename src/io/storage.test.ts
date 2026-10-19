@@ -330,6 +330,14 @@ describe('stored version is newer than the build (AC4)', () => {
     expect(ls.data.get(MAIN_KEY)).toBe(FUTURE);
   });
 
+  it('a later load() that finds readable data lifts the read-only lock', () => {
+    const { ls, port } = setup({ [MAIN_KEY]: FUTURE });
+    port.load();
+    ls.data.set(MAIN_KEY, serialize(stateAt(9)));
+    expect(port.load()).toStrictEqual({ state: stateAt(9), mode: 'persistent' });
+    expect(port.save(stateAt(9))).toMatchObject({ ok: true, rev: 10 });
+  });
+
   it('a newer version saved by another tab mid-session turns this tab read-only', () => {
     const { ls, port } = setup();
     port.load();
