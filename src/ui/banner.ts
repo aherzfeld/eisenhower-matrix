@@ -22,6 +22,11 @@ export function lostChangesWarning(count: number): string {
     : `Changed in another tab. ${count} changes made here weren't saved.`;
 }
 
+/** Banner text when another tab deleted a task whose date or Who? field held unsaved text. */
+export function deletedWhileEditingWarning(title: string, unsaved: string): string {
+  return `'${title}' was deleted in another tab. Your unsaved text was: "${unsaved}"`;
+}
+
 /** What is on screen, so an unchanged banner is not rebuilt (a rebuilt live region re-announces). */
 const shown = new WeakMap<HTMLElement, string>();
 

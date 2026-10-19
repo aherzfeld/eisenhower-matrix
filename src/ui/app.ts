@@ -7,7 +7,7 @@ import { clearDone, dropQuadrant, removeOne, restore, type Removal, type Removal
 import { validateTitle, type Result } from '../core/validate';
 import { downloadText, safeFilename } from '../io/download';
 import { backupReminder, renderBackupStatus } from './backup';
-import { EARLIER_UNREADABLE, lostChangesWarning, renderBanner, type Notice } from './banner';
+import { EARLIER_UNREADABLE, deletedWhileEditingWarning, lostChangesWarning, renderBanner, type Notice } from './banner';
 import { START, paintSquares, renderPrompt, squareClasses, triageKey, type Triage } from './capture';
 import { isComposing, resolveKey, type KeyAction } from './keys';
 import { reorderVisible } from './order';
@@ -84,6 +84,8 @@ export function createApp({
   let saveWarning: string | undefined;
   /** Changes a reload discarded; shown until the next successful save. */
   let lostWarning: string | undefined;
+  /** Unsaved field text whose task a reload found deleted; shown until the next successful save. */
+  let deletedWarning: string | undefined;
   /** Commits since the last successful save, which a reload would discard. */
   let unsaved = 0;
   /** Counts reloads, so a caller can tell its commit ended in one. */
@@ -116,6 +118,7 @@ export function createApp({
     const list: Notice[] = [];
     const candidates: (Notice | undefined)[] = [
       lostWarning === undefined ? undefined : { text: lostWarning },
+      deletedWarning === undefined ? undefined : { text: deletedWarning },
       saveWarning === undefined ? undefined : { text: saveWarning },
       rawNotice,
       loadWarning === undefined ? undefined : { text: loadWarning },
@@ -138,10 +141,23 @@ export function createApp({
     renderBackupStatus(shell.backupStatus, backupReminder(state.lastExportAt, new Date(now())));
   }
 
+  /** Text typed into a date or Who? field and not saved yet, with the task it belongs to. */
+  function unsavedFieldText(): { task: Task; text: string }[] {
+    const out: { task: Task; text: string }[] = [];
+    for (const field of root.querySelectorAll<HTMLInputElement>('.task__when, .task__who')) {
+      const task = taskOf(rowOf(field)?.dataset.taskId ?? '');
+      if (task && field.value !== '' && field.value !== field.dataset.saved) out.push({ task, text: field.value });
+    }
+    return out;
+  }
+
   /** Takes a load's state and warnings. Returns how many unsaved changes it discarded. */
   function applyLoad(res: LoadResult): number {
     const lost = unsaved;
+    const typed = unsavedFieldText();
     state = res.state;
+    const orphan = typed.find(({ task }) => !taskOf(task.id));
+    if (orphan) deletedWarning = deletedWhileEditingWarning(orphan.task.title, orphan.text);
     loadWarning = res.warning;
     if (res.raw !== undefined && res.warning !== undefined) rawNotice = { text: res.warning, raw: res.raw };
     else if (rawNotice) rawNotice = { text: EARLIER_UNREADABLE, raw: rawNotice.raw };
@@ -167,6 +183,7 @@ export function createApp({
       unsaved = 0;
       saveWarning = undefined;
       lostWarning = undefined;
+      deletedWarning = undefined;
       updateBanner();
       return 'saved';
     }
@@ -419,6 +436,7 @@ export function createApp({
     // a date the user is part-way through retyping (Chrome reports those as '').
     const shown = (isWhen ? saved.when : saved.who) ?? '';
     if (field.value !== shown) field.value = shown;
+    field.dataset.saved = shown;
     refreshStamps(rowEl, saved, today());
   }
 

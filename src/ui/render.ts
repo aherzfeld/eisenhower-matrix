@@ -273,6 +273,7 @@ function renderTask(
     const when = el('input', 'task__when');
     when.type = 'date';
     when.value = task.when ?? '';
+    when.dataset.saved = when.value; // a value that differs from this is unsaved typing
     when.dataset.control = 'when';
     when.setAttribute('aria-label', `Date for ${task.title}`);
     li.append(when, fieldErrorFor(when, fieldError?.field === 'when' ? fieldError.text : ''));
@@ -281,6 +282,7 @@ function renderTask(
     who.type = 'text';
     who.placeholder = 'Who?';
     who.value = task.who ?? '';
+    who.dataset.saved = who.value;
     who.dataset.control = 'who';
     who.autocomplete = 'off';
     who.setAttribute('aria-label', `Who is handling ${task.title}`);

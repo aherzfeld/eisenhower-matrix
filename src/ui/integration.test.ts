@@ -311,6 +311,69 @@ describe('another tab (AC12)', () => {
   });
 });
 
+describe('a field whose task another tab deleted (#15)', () => {
+  // Two apps share one jsdom document, so B's delete also moves focus out of A's field; real
+  // tabs keep their own focus. The banner must not depend on where focus is.
+  function setUp() {
+    const ls = new SharedStore();
+    writeElsewhere(ls, () => [task('w', 'Call Sam', true, false, { who: 'Sam' }), task('o', 'Other', true, true)]);
+    const a = openTab(ls, 'a');
+    const b = openTab(ls, 'b');
+    const who = a.row('w')!.querySelector<HTMLInputElement>('.task__who')!;
+    who.focus();
+    return { ls, a, b, who };
+  }
+  const DELETED = `'Call Sam' was deleted in another tab. Your unsaved text was: "Sam Lee"`;
+
+  it('keeps the unsaved text in a persistent banner, and does not bring the task back', () => {
+    const { ls, a, b, who } = setUp();
+    who.value = 'Sam Lee'; // typed, not yet saved (no change event)
+    who.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(b.app.deleteTask('w')).toBe(true);
+    a.notify();
+    expect(a.row('w')).toBeNull();
+    expect(a.banners()).toEqual([DELETED]);
+
+    // Persistent: another tab's later change does not clear it.
+    writeElsewhere(ls, (tasks) => [...tasks, task('n', 'New', true, true, { order: 1 })]);
+    a.notify();
+    expect(a.banners()).toEqual([DELETED]);
+
+    // Like the other banners, it clears on this tab's next successful save.
+    expect(a.app.commit((tasks) => toggleDone(tasks, 'o', NOW)).ok).toBe(true);
+    expect(a.banners()).toEqual([]);
+    expect(storedTasks(ls).map((t) => t.id)).not.toContain('w');
+  });
+
+  it('also when the deletion is found by the save of that field', () => {
+    const { ls, a, b, who } = setUp();
+    expect(b.app.deleteTask('w')).toBe(true); // A has not heard yet
+    who.value = 'Sam Lee';
+    who.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(a.row('w')).toBeNull();
+    expect(a.banners()).toContain(DELETED);
+    expect(storedTasks(ls).map((t) => t.id)).not.toContain('w');
+  });
+
+  it('shows no banner when the field held nothing unsaved', () => {
+    const { a, b } = setUp();
+    expect(b.app.deleteTask('w')).toBe(true);
+    a.notify();
+    expect(a.row('w')).toBeNull();
+    expect(a.banners()).toEqual([]);
+  });
+
+  it('shows no banner for a value that was saved before the delete', () => {
+    const { a, b, who } = setUp();
+    who.value = 'Sam Lee';
+    who.dispatchEvent(new Event('change', { bubbles: true }));
+    b.notify();
+    expect(b.app.deleteTask('w')).toBe(true);
+    a.notify();
+    expect(a.banners()).toEqual([]);
+  });
+});
+
 describe('no-op changes do not save', () => {
   it('moving a task to the quadrant it is already in writes nothing and keeps the rev', () => {
     const ls = new SharedStore({ [MAIN_KEY]: serialize(stateWith([task('a', 'A', true, true)])) });
