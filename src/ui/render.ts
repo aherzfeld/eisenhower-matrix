@@ -290,22 +290,34 @@ function renderTask(
   return li;
 }
 
+/**
+ * The task ids each list showed at its last render. Presentational only: a row that was not
+ * there before gets `is-new`, which the stylesheet uses to print it in. Nothing on a list's
+ * first render, so loading the page does not animate.
+ */
+const shownIds = new WeakMap<HTMLUListElement, ReadonlySet<string>>();
+
 /** Re-renders every list and count. Callers restore focus afterwards. */
 export function renderBoard(shell: Shell, tasks: readonly Task[], view: BoardView): void {
   for (const q of QUADRANTS) {
     const sorted = sortedFor(tasks, q.id);
     const stopId = sorted.some((t) => t.id === view.tabStops[q.id]) ? view.tabStops[q.id] : sorted[0]?.id;
-    shell.lists[q.id].replaceChildren(
-      ...sorted.map((t) =>
-        renderTask(
+    const list = shell.lists[q.id];
+    const before = shownIds.get(list);
+    list.replaceChildren(
+      ...sorted.map((t) => {
+        const li = renderTask(
           t,
           t.id === stopId,
           view.editing?.id === t.id ? view.editing : undefined,
           view.today,
           q.id === 'do' && t.id === sorted[0]?.id,
-        ),
-      ),
+        );
+        if (before && !before.has(t.id)) li.classList.add('is-new');
+        return li;
+      }),
     );
+    shownIds.set(list, new Set(sorted.map((t) => t.id)));
     shell.counts[q.id].textContent = String(sorted.filter((t) => !t.done).length);
     if (q.id === 'delete') shell.dropAll.hidden = sorted.length === 0;
   }
