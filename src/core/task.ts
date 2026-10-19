@@ -182,3 +182,23 @@ export function reorder(tasks: Task[], id: string, direction: 'up' | 'down', now
   });
   return ok(out);
 }
+
+/**
+ * True when `b` holds the same tasks as `a`, in the same array order, ignoring `updatedAt`.
+ * An op whose only effect is a new timestamp changed nothing the user can see, so it is not
+ * worth a save (each save bumps the rev other tabs check against).
+ */
+export function sameTasks(a: readonly Task[], b: readonly Task[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((t, i) => sameTask(t, b[i]!));
+}
+
+function sameTask(a: Task, b: Task): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)] as (keyof Task)[]);
+  keys.delete('updatedAt');
+  for (const k of keys) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
