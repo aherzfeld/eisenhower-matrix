@@ -46,6 +46,18 @@ describe('resolveKey', () => {
     expect(resolveKey(press({ key: 'я', code: 'KeyZ', ctrlKey: true }))).toEqual({ type: 'undo' });
   });
 
+  it('ignores KeyZ when the layout prints a Latin key or symbol there (AZERTY w, QWERTZ y, Dvorak ;)', () => {
+    expect(resolveKey(press({ key: 'w', code: 'KeyZ', metaKey: true }))).toBeUndefined();
+    expect(resolveKey(press({ key: 'W', code: 'KeyZ', ctrlKey: true }))).toBeUndefined();
+    expect(resolveKey(press({ key: 'y', code: 'KeyZ', ctrlKey: true }))).toBeUndefined();
+    expect(resolveKey(press({ key: ';', code: 'KeyZ', metaKey: true }))).toBeUndefined();
+    // AZERTY's z sits on code KeyW; the key itself still matches.
+    expect(resolveKey(press({ key: 'z', code: 'KeyW', metaKey: true }))).toEqual({ type: 'undo' });
+    // Greek and caps-locked Cyrillic still map by position.
+    expect(resolveKey(press({ key: 'ζ', code: 'KeyZ', metaKey: true }))).toEqual({ type: 'undo' });
+    expect(resolveKey(press({ key: 'Я', code: 'KeyZ', ctrlKey: true }))).toEqual({ type: 'undo' });
+  });
+
   it('leaves a KeyZ chord alone inside an input, with Shift, or with Alt', () => {
     expect(resolveKey(press({ key: 'я', code: 'KeyZ', metaKey: true }, document.createElement('input')))).toBeUndefined();
     expect(resolveKey(press({ key: 'я', code: 'KeyZ', metaKey: true, shiftKey: true }))).toBeUndefined();

@@ -31,11 +31,22 @@ export function isTyping(event: KeyboardEvent): boolean {
   return t.closest('[contenteditable]:not([contenteditable="false"])') !== null;
 }
 
+/**
+ * Z by its printed key, or by position (code KeyZ) when that key prints a non-ASCII character,
+ * as on Russian or Greek layouts. A Latin layout that prints something else there means that
+ * key instead: AZERTY's W (Cmd+W closes the tab), QWERTZ's Y, Dvorak's ;.
+ */
+function isUndoKey({ key, code }: KeyboardEvent): boolean {
+  if (key === 'z' || key === 'Z') return true;
+  // One code point beyond ASCII; named keys ('Unidentified', 'Dead') are longer.
+  return code === 'KeyZ' && [...key].length === 1 && key.codePointAt(0)! > 0x7f;
+}
+
 export function resolveKey(event: KeyboardEvent): KeyAction | undefined {
   if (isTyping(event)) return undefined;
   const { key } = event;
   // Undo only fires out of a text field (isTyping returned above), so the browser's own undo wins there.
-  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && (key === 'z' || key === 'Z' || event.code === 'KeyZ')) {
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && isUndoKey(event)) {
     return { type: 'undo' };
   }
   if (event.ctrlKey || event.metaKey) return undefined;
