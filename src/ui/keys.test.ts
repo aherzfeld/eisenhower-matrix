@@ -30,10 +30,12 @@ describe('resolveKey', () => {
     });
     expect(resolveKey(press({ key: ' ' }))).toEqual({ type: 'toggleDone' });
     expect(resolveKey(press({ key: 'Enter' }))).toEqual({ type: 'rename' });
+    expect(resolveKey(press({ key: 'Delete' }))).toEqual({ type: 'remove' });
+    expect(resolveKey(press({ key: 'Backspace' }))).toEqual({ type: 'remove' });
   });
 
-  it('leaves unbound keys alone (Delete and r belong to later tasks)', () => {
-    for (const key of ['Delete', 'Backspace', 'r', 'x', '5', '0']) {
+  it('leaves unbound keys alone (r belongs to a later task)', () => {
+    for (const key of ['r', 'x', '5', '0']) {
       expect(resolveKey(press({ key }))).toBeUndefined();
     }
   });
@@ -55,7 +57,7 @@ describe('resolveKey', () => {
     editable.setAttribute('contenteditable', 'true');
     targets.push(editable);
     for (const t of targets) {
-      for (const key of ['/', '1', 'ArrowUp', ' ', 'Enter']) {
+      for (const key of ['/', '1', 'ArrowUp', ' ', 'Enter', 'Delete', 'Backspace']) {
         expect(resolveKey(press({ key }, t))).toBeUndefined();
       }
     }
@@ -63,5 +65,11 @@ describe('resolveKey', () => {
 
   it('ignores keys during IME composition', () => {
     expect(resolveKey(press({ key: '1', isComposing: true }))).toBeUndefined();
+    expect(resolveKey(press({ key: 'Backspace', isComposing: true }))).toBeUndefined();
+  });
+
+  it('ignores Delete and Backspace in a chord', () => {
+    expect(resolveKey(press({ key: 'Backspace', metaKey: true }))).toBeUndefined();
+    expect(resolveKey(press({ key: 'Delete', altKey: true }))).toBeUndefined();
   });
 });

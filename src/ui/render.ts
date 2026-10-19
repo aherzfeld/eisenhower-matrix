@@ -11,9 +11,14 @@ export type Shell = {
   banner: HTMLElement;
   toast: HTMLElement;
   footer: HTMLElement;
+  /** Shown only while some task is done. */
+  clearDone: HTMLButtonElement;
+  /** In the Delete quadrant's footer; shown only while that quadrant has tasks. */
+  dropAll: HTMLButtonElement;
   backupStatus: HTMLElement;
   lists: Record<Quadrant, HTMLUListElement>;
   counts: Record<Quadrant, HTMLElement>;
+  footers: Record<Quadrant, HTMLElement>;
 };
 
 export type Editing = { id: string; draft: string; error?: string };
@@ -47,6 +52,13 @@ function el<K extends keyof HTMLElementTagNameMap>(
   if (className) e.className = className;
   if (text !== undefined) e.textContent = text;
   return e;
+}
+
+function textButton(className: string, text: string): HTMLButtonElement {
+  const b = el('button', className, text);
+  b.type = 'button';
+  b.hidden = true;
+  return b;
 }
 
 function chip(text: string, extra = ''): HTMLElement {
@@ -114,6 +126,7 @@ export function buildShell(root: HTMLElement): Shell {
   );
   const lists = {} as Record<Quadrant, HTMLUListElement>;
   const counts = {} as Record<Quadrant, HTMLElement>;
+  const footers = {} as Record<Quadrant, HTMLElement>;
   for (const q of QUADRANTS) {
     const section = el('section', `q q--${q.id}`);
     const titleId = `q-${q.id}-title`;
@@ -124,12 +137,19 @@ export function buildShell(root: HTMLElement): Shell {
     counts[q.id] = el('span', 'q__count', '0');
     band.append(chip(q.key, 'q__key'), name, counts[q.id], el('span', 'q__axes', AXES[q.id]));
     lists[q.id] = el('ul', 'q__list');
-    section.append(band, el('p', 'q__verb', VERBS[q.id]), lists[q.id], el('footer', 'q__footer'));
+    footers[q.id] = el('footer', 'q__footer');
+    section.append(band, el('p', 'q__verb', VERBS[q.id]), lists[q.id], footers[q.id]);
     board.append(section);
   }
 
+  const dropAll = textButton('q__drop', 'Drop all');
+  footers.delete.append(dropAll);
+
   const toast = el('div', 'toast-slot');
+  toast.setAttribute('role', 'status'); // announces removals and undos
   const footer = el('footer', 'footer');
+  const clearDone = textButton('clear-done', 'Clear done');
+  footer.append(clearDone);
   const main = el('main', 'main');
   main.append(capture, region, board);
   root.replaceChildren(header, banner, main, toast, footer);
@@ -142,9 +162,12 @@ export function buildShell(root: HTMLElement): Shell {
     banner,
     toast,
     footer,
+    clearDone,
+    dropAll,
     backupStatus,
     lists,
     counts,
+    footers,
   };
 }
 
@@ -194,6 +217,13 @@ function renderTask(task: Task, tabStop: boolean, editing: Editing | undefined):
     moves.append(b);
   }
   li.append(moves);
+
+  const del = el('button', 'task__delete');
+  del.type = 'button';
+  del.tabIndex = -1;
+  del.setAttribute('aria-label', `Delete ${task.title}`);
+  del.append(chip('⌫'));
+  li.append(del);
   return li;
 }
 
@@ -208,5 +238,7 @@ export function renderBoard(shell: Shell, tasks: readonly Task[], view: BoardVie
       ),
     );
     shell.counts[q.id].textContent = String(sorted.filter((t) => !t.done).length);
+    if (q.id === 'delete') shell.dropAll.hidden = sorted.length === 0;
   }
+  shell.clearDone.hidden = !tasks.some((t) => t.done);
 }

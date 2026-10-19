@@ -7,7 +7,8 @@ export type KeyAction =
   | { type: 'focusStep'; delta: -1 | 1 }
   | { type: 'reorder'; direction: 'up' | 'down' }
   | { type: 'toggleDone' }
-  | { type: 'rename' };
+  | { type: 'rename' }
+  | { type: 'remove' };
 
 const MOVE_KEYS: Record<string, Quadrant> = { '1': 'do', '2': 'schedule', '3': 'delegate', '4': 'delete' };
 
@@ -46,6 +47,7 @@ export function resolveKey(event: KeyboardEvent): KeyAction | undefined {
   if (quadrant) return { type: 'move', quadrant };
   if (key === ' ') return { type: 'toggleDone' };
   if (key === 'Enter') return { type: 'rename' };
-  // Later tasks bind here: Delete/Backspace remove (T7), 'r' starts review (T9).
+  if (key === 'Delete' || key === 'Backspace') return { type: 'remove' };
+  // Later tasks bind here: 'r' starts review (T9).
   return undefined;
 }
