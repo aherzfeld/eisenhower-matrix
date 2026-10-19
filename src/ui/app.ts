@@ -11,7 +11,7 @@ import { EARLIER_UNREADABLE, lostChangesWarning, renderBanner, type Notice } fro
 import { START, paintSquares, renderPrompt, squareClasses, triageKey, type Triage } from './capture';
 import { isComposing, resolveKey, type KeyAction } from './keys';
 import { reorderVisible } from './order';
-import { buildShell, refreshStamps, renderBoard, sortedFor, type Editing, type Shell } from './render';
+import { buildShell, refreshStamps, renderBoard, sortedFor, type Editing, type FieldError, type Shell } from './render';
 import { reviewKey, reviewProgress, settleReview, startReview, type Review } from './review';
 import { browserTimers, createToaster, type Timers } from './toast';
 import { createTransfer, type SaveOutcome } from './transfer';
@@ -99,6 +99,8 @@ export function createApp({
   let midnightTimer: unknown;
   let pendingTitle = '';
   let editing: Editing | undefined;
+  /** Rejected date or Who? values by task id, shown beside the field until it next saves (#14). */
+  const fieldErrors = new Map<string, FieldError>();
   const tabStops: Partial<Record<Quadrant, string>> = {};
 
   const rowOf = (t: EventTarget | null): HTMLElement | null =>
@@ -227,7 +229,8 @@ export function createApp({
     }
     renderedToday = today();
     renderStale = false;
-    renderBoard(shell, state.tasks, { tabStops, editing, today: renderedToday });
+    for (const id of fieldErrors.keys()) if (!taskOf(id)) fieldErrors.delete(id);
+    renderBoard(shell, state.tasks, { tabStops, editing, today: renderedToday, fieldErrors });
     updateBackupStatus();
     if (spot) restoreFocus(spot);
   }
@@ -407,7 +410,11 @@ export function createApp({
       { render: false },
     );
     const saved = taskOf(id) ?? current;
-    shell.message.textContent = result.ok ? '' : result.error;
+    if (result.ok) fieldErrors.delete(id);
+    else fieldErrors.set(id, { field: isWhen ? 'when' : 'who', text: result.error });
+    // The row on screen now: a refused-as-stale save has rebuilt it.
+    const message = findRow(id)?.querySelector('.task__field-error');
+    if (message) message.textContent = result.ok ? '' : result.error;
     // Only when it differs: writing a date input, even with its own value, wipes the parts of
     // a date the user is part-way through retyping (Chrome reports those as '').
     const shown = (isWhen ? saved.when : saved.who) ?? '';

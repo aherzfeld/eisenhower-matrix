@@ -24,12 +24,17 @@ export type Shell = {
 
 export type Editing = { id: string; draft: string; error?: string };
 
+/** A rejected date or Who? value's message, shown beside that field (#14). */
+export type FieldError = { field: 'when' | 'who'; text: string };
+
 export type BoardView = {
   /** The id of each quadrant's single Tab stop. Falls back to the first task. */
   tabStops: Partial<Record<Quadrant, string>>;
   editing?: Editing;
   /** Local 'YYYY-MM-DD'. Due status is derived from it on every render. */
   today: string;
+  /** By task id. Shown only while the row still has that kind of field. */
+  fieldErrors?: ReadonlyMap<string, FieldError>;
 };
 
 const VERBS: Record<Quadrant, string> = {
@@ -212,12 +217,25 @@ export function refreshStamps(li: HTMLElement, task: Task, today: string): void 
  * Each control in a row carries `data-control`, unique within the row and the same on every
  * render, so focus can be put back on a rebuilt row's matching control (#12).
  */
+/** Unique ids for the field errors, so each field's aria-describedby names its own. */
+let fieldErrorSeq = 0;
+
+/** The message element for a date or Who? field, tied to it by aria-describedby. */
+function fieldErrorFor(field: HTMLInputElement, text: string): HTMLElement {
+  const msg = el('span', 'task__field-error', text);
+  msg.id = `task-field-error-${++fieldErrorSeq}`;
+  msg.setAttribute('role', 'alert');
+  field.setAttribute('aria-describedby', msg.id);
+  return msg;
+}
+
 function renderTask(
   task: Task,
   tabStop: boolean,
   editing: Editing | undefined,
   today: string,
   isNext: boolean,
+  fieldError: FieldError | undefined,
 ): HTMLLIElement {
   const li = el('li', 'task');
   li.dataset.taskId = task.id;
@@ -257,7 +275,7 @@ function renderTask(
     when.value = task.when ?? '';
     when.dataset.control = 'when';
     when.setAttribute('aria-label', `Date for ${task.title}`);
-    li.append(when);
+    li.append(when, fieldErrorFor(when, fieldError?.field === 'when' ? fieldError.text : ''));
   } else if (quadrant === 'delegate') {
     const who = el('input', 'task__who');
     who.type = 'text';
@@ -266,7 +284,7 @@ function renderTask(
     who.dataset.control = 'who';
     who.autocomplete = 'off';
     who.setAttribute('aria-label', `Who is handling ${task.title}`);
-    li.append(who);
+    li.append(who, fieldErrorFor(who, fieldError?.field === 'who' ? fieldError.text : ''));
   }
 
   if (!editing) {
@@ -324,6 +342,7 @@ export function renderBoard(shell: Shell, tasks: readonly Task[], view: BoardVie
           view.editing?.id === t.id ? view.editing : undefined,
           view.today,
           q.id === 'do' && t.id === sorted[0]?.id,
+          view.fieldErrors?.get(t.id),
         );
         if (before && !before.has(t.id)) li.classList.add('is-new');
         return li;

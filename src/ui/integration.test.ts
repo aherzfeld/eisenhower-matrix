@@ -243,6 +243,26 @@ describe('another tab (AC12)', () => {
     expect(b.titles('delegate')).toEqual(['Delegate me', 'Other']);
   });
 
+  it('a Who? refused as stale says so beside the rebuilt field, not under the capture input (#14)', () => {
+    const ls = new SharedStore();
+    writeElsewhere(ls, () => [task('w', 'Delegate me', true, false)]);
+    const b = openTab(ls);
+    writeElsewhere(ls, (tasks) => [...tasks, task('o', 'Other', true, false, { order: 1 })]); // event not yet here
+    const who = b.row('w')!.querySelector<HTMLInputElement>('.task__who')!;
+    who.focus();
+    who.value = 'Sam';
+    who.dispatchEvent(new Event('change', { bubbles: true }));
+    const field = b.row('w')!.querySelector<HTMLInputElement>('.task__who')!;
+    const error = b.row('w')!.querySelector<HTMLElement>('.task__field-error')!;
+    expect(error.textContent).toBe(NOT_SAVED_CONFLICT);
+    expect(field.getAttribute('aria-describedby')).toBe(error.id);
+    expect(b.root.querySelector('.capture__message')!.textContent).toBe('');
+    field.value = 'Sam';
+    field.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(storedTasks(ls).find((t) => t.id === 'w')!.who).toBe('Sam');
+    expect(b.row('w')!.querySelector('.task__field-error')!.textContent).toBe('');
+  });
+
   it('a rename refused as stale stays open with the draft, so Enter saves it on the fresh data', () => {
     const ls = new SharedStore();
     writeElsewhere(ls, () => [task('x', 'Old', true, true)]);

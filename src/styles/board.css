@@ -379,6 +379,18 @@
   }
 }
 
+/* A rejected date or Who?, on its own line under the field it belongs to. */
+.task__field-error {
+  flex-basis: 100%;
+  color: var(--danger);
+  font: 500 var(--t-xs) / 1.4 var(--font-mono);
+  text-align: right;
+}
+
+.task__field-error:empty {
+  display: none;
+}
+
 .task__who::placeholder {
   color: var(--ink-muted);
   opacity: 1;

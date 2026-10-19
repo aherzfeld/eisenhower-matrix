@@ -281,23 +281,59 @@ describe('Delegate and Do follow-through (AC10)', () => {
     expect(row('d').querySelector('.task__who')).toBeNull();
   });
 
-  it('rejects an over-long who without losing the old value, and says why', () => {
+  /** The error beside a row's date or Who? field (#14). */
+  const fieldError = (id: string) => row(id).querySelector<HTMLElement>('.task__field-error')!;
+  const WHO_TOO_LONG = 'Who must be at most 80 characters.';
+
+  // Changed for #14: these asserted the error in .capture__message; it now sits beside the field.
+  it('rejects an over-long who without losing the old value, and says why beside the field', () => {
     boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
     const who = row('g').querySelector<HTMLInputElement>('.task__who')!;
     setField(who, 'x'.repeat(81));
     expect(taskIn('g').who).toBe('Sam');
     expect(who.value).toBe('Sam'); // the field shows what was saved, not the rejected text
-    expect(message().textContent).toBe('Who must be at most 80 characters.');
+    const error = fieldError('g');
+    expect(error.textContent).toBe(WHO_TOO_LONG);
+    expect(error.getAttribute('role')).toBe('alert'); // announced
+    expect(error.id).not.toBe('');
+    expect(who.getAttribute('aria-describedby')?.split(' ')).toContain(error.id);
+    expect(message().textContent).toBe('');
     expect(row('g').querySelector('.stamp--waiting')!.textContent).toBe('Waiting on Sam');
   });
 
-  it('clears that message once a later save succeeds', () => {
+  it('clears that error once the field saves', () => {
     boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
     const who = row('g').querySelector<HTMLInputElement>('.task__who')!;
     setField(who, 'x'.repeat(81));
     setField(who, 'Ana');
     expect(taskIn('g').who).toBe('Ana');
+    expect(fieldError('g').textContent).toBe('');
     expect(message().textContent).toBe('');
+  });
+
+  it('clears that error when the field is put back to its saved value', () => {
+    boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
+    const who = row('g').querySelector<HTMLInputElement>('.task__who')!;
+    setField(who, 'x'.repeat(81));
+    setField(who, 'Sam');
+    expect(fieldError('g').textContent).toBe('');
+  });
+
+  it('keeps the error beside its own field through a re-render, and off the others', () => {
+    boot([task('g', 'Send quote', true, false, { who: 'Sam' }), task('h', 'Book room', true, false, { order: 1 })]);
+    setField(row('g').querySelector<HTMLInputElement>('.task__who')!, 'x'.repeat(81));
+    app!.render();
+    expect(fieldError('g').textContent).toBe(WHO_TOO_LONG);
+    expect(fieldError('h').textContent).toBe('');
+    expect(message().textContent).toBe('');
+  });
+
+  it('gives every date and Who? field its own error element, and none to other rows', () => {
+    boot([task('g', 'Send quote', true, false), task('s', 'Pay rent', false, true), task('d', 'Fire', true, true)]);
+    const ids = [fieldError('g').id, fieldError('s').id];
+    expect(new Set(ids).size).toBe(2);
+    expect(row('s').querySelector('.task__when')!.getAttribute('aria-describedby')).toBe(ids[1]);
+    expect(row('d').querySelector('.task__field-error')).toBeNull();
   });
 
   it('shows the trimmed who in the field, and an empty field for whitespace', () => {
