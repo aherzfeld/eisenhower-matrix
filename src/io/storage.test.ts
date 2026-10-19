@@ -30,6 +30,12 @@ class StubStorage {
   constructor(initial: Record<string, string> = {}) {
     for (const [k, v] of Object.entries(initial)) this.data.set(k, v);
   }
+  get length(): number {
+    return this.data.size;
+  }
+  key(index: number): string | null {
+    return [...this.data.keys()][index] ?? null;
+  }
   getItem(key: string): string | null {
     const e = this.failGet?.(key);
     if (e !== undefined && e !== null && e !== false) throw e;
@@ -279,6 +285,27 @@ describe('stored value fails parse (AC4)', () => {
     port.load();
     port.load();
     expect(ls.writes).toEqual([BACKUP_KEY]);
+  });
+
+  it('a reload (or a second tab) finds the existing backup instead of copying the data again', () => {
+    const { ls, port } = setup({ [MAIN_KEY]: GARBAGE });
+    port.load();
+    const later = () => NOW + 60_000;
+    const reloaded = createBrowserStorage({ storage: () => ls, now: later, navigator: {} });
+    expect(reloaded.load()).toMatchObject({ mode: 'persistent', warning: WARNINGS.corruptBackedUp });
+    expect(reloaded.save(stateAt(0))).toMatchObject({ ok: true });
+    expect(ls.writes).toEqual([BACKUP_KEY, MAIN_KEY]);
+  });
+
+  it('repeated reloads of untouched bad data never fill the quota with copies of it', () => {
+    const big = GARBAGE + 'x'.repeat(1000);
+    const { ls } = setup({ [MAIN_KEY]: big });
+    // Room for the main key and one copy of it, not two.
+    ls.failSet = () => [...ls.data.values()].join('').length + big.length > 2500 && quota();
+    for (let i = 0; i < 5; i++) {
+      const port = createBrowserStorage({ storage: () => ls, now: () => NOW + i * 60_000, navigator: {} });
+      expect(port.load()).toMatchObject({ mode: 'persistent', warning: WARNINGS.corruptBackedUp });
+    }
   });
 
   it.each(['not json', 'null', '{"version":"1","rev":0,"tasks":[]}', '{"rev":0,"tasks":[]}'])(

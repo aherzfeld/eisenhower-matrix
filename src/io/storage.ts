@@ -24,7 +24,7 @@ export const WARNINGS = {
 } as const;
 
 /** The part of the DOM Storage interface this adapter uses. */
-export type KeyValueStore = Pick<Storage, 'getItem' | 'setItem'>;
+export type KeyValueStore = Pick<Storage, 'getItem' | 'setItem' | 'key' | 'length'>;
 
 type EventSource = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>;
 type PersistNavigator = { storage?: { persist?: () => Promise<boolean> } };
@@ -64,16 +64,16 @@ export function createBrowserStorage({
   let lock: Lock | null = null;
   let base: Base = { raw: null, rev: 0 };
   let guarded: Guarded | null = null;
-  /** The last backup written per label, so reloading the same bad value doesn't copy it twice. */
-  const backups = new Map<string, { raw: string; key: string }>();
-
   requestPersistence(nav);
 
-  /** Copies `raw` to a fresh backup key and checks it reads back. Returns false on any failure. */
+  /**
+   * Makes sure some backup key holds exactly `raw`: an existing one (from an earlier page load
+   * or another tab, so reloading untouched bad data never piles up copies until the quota is
+   * full), or else a fresh key that is checked to read back. Returns false on any failure.
+   */
   function ensureBackup(store: KeyValueStore, label: string, raw: string): boolean {
     try {
-      const known = backups.get(label);
-      if (known && known.raw === raw && store.getItem(known.key) === raw) return true;
+      if (hasBackup(store, raw)) return true;
       const base = `${BACKUP_PREFIX}${label ? `${label}:` : ''}${new Date(now()).toISOString()}`;
       let key = base;
       for (let i = 1; store.getItem(key) !== null; i++) {
@@ -81,9 +81,7 @@ export function createBrowserStorage({
         key = `${base}-${i}`;
       }
       store.setItem(key, raw);
-      if (store.getItem(key) !== raw) return false;
-      backups.set(label, { raw, key });
-      return true;
+      return store.getItem(key) === raw;
     } catch {
       return false;
     }
@@ -198,6 +196,14 @@ export function createBrowserStorage({
   }
 
   return { load, save, subscribe };
+}
+
+function hasBackup(store: KeyValueStore, raw: string): boolean {
+  for (let i = 0; i < store.length; i++) {
+    const key = store.key(i);
+    if (key?.startsWith(BACKUP_PREFIX) && store.getItem(key) === raw) return true;
+  }
+  return false;
 }
 
 /** Asks the browser not to evict our data (Safari's 7-day rule). Best effort, never awaited. */
