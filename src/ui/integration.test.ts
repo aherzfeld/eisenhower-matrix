@@ -226,7 +226,7 @@ describe('another tab (AC12)', () => {
     expect(document.activeElement).toBe(b.row('x'));
   });
 
-  it('does not tear down a field the user is typing in; the board catches up when they leave it', () => {
+  it('does not tear down a field the user is typing in; the board catches up when they leave it', async () => {
     const ls = new SharedStore();
     writeElsewhere(ls, () => [task('w', 'Delegate me', true, false)]);
     const b = openTab(ls);
@@ -239,7 +239,8 @@ describe('another tab (AC12)', () => {
     expect(who.isConnected).toBe(true);
     expect(who.value).toBe('Sa');
     expect(b.app.getState().tasks.map((t) => t.id)).toEqual(['w', 'o']);
-    who.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    who.blur();
+    await new Promise((resolve) => setTimeout(resolve, 0)); // the held render runs on the next task
     expect(b.titles('delegate')).toEqual(['Delegate me', 'Other']);
   });
 

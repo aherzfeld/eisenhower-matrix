@@ -234,12 +234,9 @@ export function createApp({
     else focusRow(id);
   }
 
-  /**
-   * `focusTarget` is the element focus is on, or moving to: it, or its twin after the rebuild,
-   * gets focus back. A `focusId` puts focus on that task's row instead.
-   */
-  function render(focusId?: string, focusTarget: Element | null = doc.activeElement) {
-    const spot = focusId ? { id: focusId } : spotOf(focusTarget);
+  /** Focus goes back to the focused control's rebuilt twin, or with `focusId` to that task's row. */
+  function render(focusId?: string) {
+    const spot = focusId ? { id: focusId } : spotOf(doc.activeElement);
     if (focusId) {
       const t = taskOf(focusId);
       if (t) tabStops[quadrantOf(t)] = focusId;
@@ -256,6 +253,24 @@ export function createApp({
    * Renders now, unless the user is typing in a field of a task that still exists: then on
    * focusout, so a reload never wipes a half-typed date or name.
    */
+  /** A pointer is down on the board: a render now would rebuild the node under it and lose its click. */
+  let pressing = false;
+  let flushQueued = false;
+
+  /**
+   * Runs a held render once focus has left the task fields. On the next task, so focus has
+   * landed (activeElement is body during focusout) and a press's mouseup and click, which come
+   * in the same task as its pointerup or, for a tap, its mousedown, reach the nodes they began on.
+   */
+  function flushHeldRender() {
+    if (flushQueued) return;
+    flushQueued = true;
+    timers.setTimeout(() => {
+      flushQueued = false;
+      if (renderStale && !pressing && !inTaskField()) render();
+    }, 0);
+  }
+
   function renderSoon() {
     const id = rowOf(doc.activeElement)?.dataset.taskId;
     if (inTaskField() && id && taskOf(id)) {
@@ -695,13 +710,19 @@ export function createApp({
     tabStops[quadrantOf(task)] = id;
     for (const r of row.parentElement?.children ?? []) (r as HTMLElement).tabIndex = r === row ? 0 : -1;
   }, opts);
-  root.addEventListener('focusout', (event) => {
-    const next = event.relatedTarget;
-    const stillInField = next instanceof Element && next.matches('.task__when, .task__who, .task__edit');
-    // Focus is between elements here (activeElement is body), so it goes back to where it was
-    // heading: the rebuilt twin of `next`. Not recheckDue(), which would see no field focused.
-    if (renderStale && !stillInField) render(undefined, next instanceof Element ? next : null);
+  root.addEventListener('focusout', () => {
+    if (renderStale && !pressing) flushHeldRender(); // a press flushes as it ends, below
   }, opts);
+  root.addEventListener('pointerdown', () => {
+    pressing = true;
+  }, opts);
+  for (const type of ['pointerup', 'pointercancel']) {
+    doc.addEventListener(type, () => {
+      if (!pressing) return;
+      pressing = false;
+      if (renderStale) flushHeldRender();
+    }, opts);
+  }
   doc.addEventListener('keydown', onDocKeydown, opts);
   doc.addEventListener('visibilitychange', () => {
     if (doc.visibilityState !== 'visible') return;

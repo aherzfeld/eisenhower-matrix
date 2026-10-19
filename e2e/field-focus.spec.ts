@@ -36,3 +36,40 @@ test('a render held past midnight keeps focus where it was going', async ({ page
   await expect(delegate.locator('.task__rename')).toBeFocused();
   await expect(page.locator('body')).not.toBeFocused();
 });
+
+// A press that moves focus out of the field runs the held render. If that render rebuilt the
+// row under the pointer at mousedown, the mouseup landed on a new node and the click was lost.
+for (const [name, control, landed] of [
+  ['Move to Do', '.task__move[data-move="do"]', '.q--do .task'],
+  ['the checkbox', '.task__check', '.task[data-done="true"]'],
+] as const) {
+  test(`a click on ${name} is not lost when it runs a held render`, async ({ page }) => {
+    await page.clock.install({ time: new Date(2026, 2, 10, 23, 58, 0) });
+    await page.goto('/');
+    await add(page, 'Send quote', 'n', 'y'); // Delegate
+    const row = page.locator('.q--delegate .task');
+    await row.locator('.task__who').click();
+    await page.keyboard.type('Sam');
+    await page.clock.runFor(3 * 60_000); // past local midnight: the render is held
+    await expect(page.locator('.q--delegate .task__who')).toBeFocused();
+
+    await row.locator(control).click();
+    await expect(page.locator(landed)).toHaveCount(1);
+    await expect(page.locator('.task__title')).toHaveText(['Send quote']);
+  });
+}
+
+test('a tap on Move to Do is not lost when it runs a held render', async ({ browser }) => {
+  const context = await browser.newContext({ hasTouch: true });
+  const page = await context.newPage();
+  await page.clock.install({ time: new Date(2026, 2, 10, 23, 58, 0) });
+  await page.goto('/');
+  await add(page, 'Send quote', 'n', 'y');
+  const row = page.locator('.q--delegate .task');
+  await row.locator('.task__who').tap();
+  await page.keyboard.type('Sam');
+  await page.clock.runFor(3 * 60_000);
+  await row.locator('.task__move[data-move="do"]').tap();
+  await expect(page.locator('.q--do .task')).toHaveCount(1);
+  await context.close();
+});

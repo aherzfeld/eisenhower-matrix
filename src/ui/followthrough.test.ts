@@ -175,15 +175,21 @@ describe('due rechecks', () => {
     clock = new Date(2026, 2, 11, 0, 0, 0, 0);
     vi.advanceTimersByTime(12 * 3600 * 1000);
     expect(row('s').querySelector('.task__when')).toBe(date);
+    // The window losing focus fires focusout but leaves the field focused: still held.
     date.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    vi.advanceTimersByTime(0);
+    expect(row('s').querySelector('.task__when')).toBe(date);
+    date.blur(); // the render runs on the next task, once focus has landed
+    vi.advanceTimersByTime(0);
     expect(row('s').querySelector('.stamp--due')).not.toBeNull();
   });
 
   describe('focus after a deferred render (#12)', () => {
-    /** Focus leaves the field for `next`, as Tab or a click would: focusout first, then focus. */
+    /** Focus leaves the field for `next`, as Tab would: focusout, then focus, then the next task. */
     function moveFocus(from: HTMLElement, next: HTMLElement) {
       key(from, 'Tab');
       next.focus();
+      vi.advanceTimersByTime(0);
     }
 
     it('lands on the control in the same row that focus moved to, not on body', () => {
@@ -224,6 +230,45 @@ describe('due rechecks', () => {
       moveFocus(date, promote);
       expect(row('s').querySelector('.task__promote')).toBeNull();
       expect(document.activeElement).toBe(row('s'));
+    });
+
+    /** A Delegate row whose Who? field held a render past midnight. */
+    function heldOnWho() {
+      boot([task('g', 'Send quote', true, false)]);
+      const who = row('g').querySelector<HTMLInputElement>('.task__who')!;
+      who.focus();
+      clock = new Date(2026, 2, 11, 0, 0, 0, 0);
+      vi.advanceTimersByTime(12 * 3600 * 1000);
+      expect(row('g').querySelector('.task__who')).toBe(who); // held
+      return who;
+    }
+    const press = (target: Element, type: 'pointerdown' | 'pointerup') =>
+      target.dispatchEvent(new MouseEvent(type, { bubbles: true }));
+
+    it('holds the render through a press, so the control under the pointer gets its click', () => {
+      heldOnWho();
+      const move = row('g').querySelector<HTMLElement>('[data-move="do"]')!;
+      press(move, 'pointerdown');
+      move.focus(); // mousedown moves focus out of the field
+      vi.advanceTimersByTime(0);
+      expect(move.isConnected).toBe(true); // not rebuilt under the pointer
+      press(move, 'pointerup');
+      move.click();
+      vi.advanceTimersByTime(0);
+      expect(titles('do')).toEqual(['Send quote']);
+      expect(document.activeElement).toBe(row('g'));
+    });
+
+    it('runs the held render once a press ends without a click', () => {
+      heldOnWho();
+      const move = row('g').querySelector<HTMLElement>('[data-move="do"]')!;
+      press(move, 'pointerdown');
+      move.focus();
+      press(document.body, 'pointerup'); // released elsewhere: no click
+      vi.advanceTimersByTime(0);
+      expect(move.isConnected).toBe(false); // the render ran
+      expect(document.activeElement).toBe(row('g').querySelector('[data-move="do"]'));
+      expect(titles('delegate')).toEqual(['Send quote']);
     });
 
     it('falls back to the capture input when the row is gone', () => {
