@@ -235,6 +235,15 @@ describe('Delegate and Do follow-through (AC10)', () => {
     expect(row('g').querySelector('.stamp--waiting')!.textContent).toBe('Waiting on Sam');
   });
 
+  it('clears that message once a later save succeeds', () => {
+    boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
+    const who = row('g').querySelector<HTMLInputElement>('.task__who')!;
+    setField(who, 'x'.repeat(81));
+    setField(who, 'Ana');
+    expect(taskIn('g').who).toBe('Ana');
+    expect(message().textContent).toBe('');
+  });
+
   it('shows the trimmed who in the field, and an empty field for whitespace', () => {
     boot([task('g', 'Send quote', true, false)]);
     const who = row('g').querySelector<HTMLInputElement>('.task__who')!;

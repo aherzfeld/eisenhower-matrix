@@ -268,8 +268,11 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
       { render: false },
     );
     const saved = taskOf(id) ?? current;
-    if (!result.ok) shell.message.textContent = result.error;
-    field.value = (isWhen ? saved.when : saved.who) ?? '';
+    shell.message.textContent = result.ok ? '' : result.error;
+    // Only when it differs: writing a date input, even with its own value, wipes the parts of
+    // a date the user is part-way through retyping (Chrome reports those as '').
+    const shown = (isWhen ? saved.when : saved.who) ?? '';
+    if (field.value !== shown) field.value = shown;
     refreshStamps(rowEl, saved, today());
   }
 

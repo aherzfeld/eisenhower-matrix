@@ -25,3 +25,19 @@ test('a Schedule task dated today shows DUE, and key 1 moves it to Do', async ({
   await expect(page.locator('.q--do .task__title')).toHaveText('Pay rent');
   await expect(page.locator('.q--schedule .task')).toHaveCount(0);
 });
+
+test('correcting one part of a date keeps the parts already typed', async ({ page }) => {
+  await page.goto('/');
+  await page.keyboard.press('/');
+  await page.keyboard.type('Pay rent');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('y');
+  await page.keyboard.press('n');
+  const date = page.locator('.q--schedule .task__when');
+  await date.fill('2026-03-20');
+  // Chrome clears the whole value (and fires change) when one segment is erased.
+  await date.focus(); // the month segment, in the en-US layout Playwright uses
+  await page.keyboard.press('Backspace');
+  await page.keyboard.type('04');
+  await expect(date).toHaveValue('2026-04-20');
+});
