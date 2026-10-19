@@ -96,8 +96,9 @@ toggle in v1.
   `--do` bar shrinking across the top edge.
 - **Banners:** full width under the header on `--sheet`, with a 4px left rule
   in `--danger` and plain text. Not dismissible while the condition holds.
-- **Footer:** mono 0.75rem, giving the last backup, Export and Import (as
-  buttons), and the shortcut hint "? keys".
+- **Footer:** mono 0.75rem: Clear done on the left; Export and Import (as
+  buttons) on the right. The last-backup status lives in the header. There is
+  no "? keys" hint, because the app has no `?` shortcut.
 
 ## Motion
 One orchestrated moment: when a task lands, its row prints in. It enters with
