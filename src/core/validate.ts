@@ -53,9 +53,18 @@ export function validateId(input: unknown): Result<string> {
   return ok(input);
 }
 
+/**
+ * A full ISO 8601 timestamp: date, 'T', hours:minutes:seconds, optional fraction, and a zone
+ * ('Z' or ±HH:MM), as Date#toISOString writes. Date.parse alone is too lenient: it accepts
+ * dates without a time, times without a zone (read as local time) and RFC 2822 strings.
+ */
+const TIMESTAMP =
+  /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(\.\d{1,9})?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$/;
+
 export function validateTimestamp(input: unknown): Result<string> {
   if (typeof input !== 'string' || input.length === 0) return fail('Timestamp must be text.');
-  if (Number.isNaN(Date.parse(input))) return fail('Timestamp is not a valid date-time.');
+  const m = TIMESTAMP.exec(input);
+  if (!m || !validateWhen(m[1]).ok) return fail('Timestamp is not a full ISO 8601 date-time.');
   return ok(input);
 }
 

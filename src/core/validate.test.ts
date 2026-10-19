@@ -67,10 +67,41 @@ describe('validateId', () => {
 });
 
 describe('validateTimestamp', () => {
-  it('accepts ISO timestamps', () => {
-    expect(validateTimestamp('2026-10-19T12:00:00.000Z').ok).toBe(true);
+  it.each([
+    '2026-10-19T12:00:00.000Z',
+    '2026-10-19T12:00:00Z',
+    '2026-10-19T23:59:59.999+05:30',
+    '2026-10-19T00:00:00-08:00',
+    '2024-02-29T12:00:00Z',
+    '0001-01-01T00:00:00.000Z',
+  ])('accepts the full ISO 8601 timestamp %s', (v) => {
+    expect(validateTimestamp(v)).toEqual(ok(v));
   });
-  it.each(['yesterday', '', '2026-13-45T00:00:00Z', 5])('rejects %s', (v) => {
+  it.each([
+    'yesterday',
+    '',
+    5,
+    null,
+    '2026-13-45T00:00:00Z',
+    // Date.parse accepts all of these; a stored timestamp must not.
+    '2026-10-19',
+    '2026-10-19T12:00',
+    '2026-10-19T12:00Z',
+    '2026-10-19T12:00:00',
+    '2026-10-19 12:00:00Z',
+    '2026-10-19t12:00:00z',
+    'Mon, 19 Oct 2026 12:00:00 GMT',
+    '2026-02-30T00:00:00Z',
+    '2025-02-29T00:00:00Z',
+    '2026-10-19T24:00:00Z',
+    '2026-10-19T12:60:00Z',
+    '2026-10-19T12:00:60Z',
+    '2026-10-19T12:00:00.Z',
+    '2026-10-19T12:00:00+0530',
+    '2026-10-19T12:00:00+24:00',
+    '+002026-10-19T12:00:00Z',
+    ' 2026-10-19T12:00:00Z',
+  ])('rejects %s', (v) => {
     expect(validateTimestamp(v).ok).toBe(false);
   });
 });
