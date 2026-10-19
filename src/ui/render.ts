@@ -24,12 +24,17 @@ export type Shell = {
 
 export type Editing = { id: string; draft: string; error?: string };
 
+/** A rejected date or Who? value's message, shown beside that field (#14). */
+export type FieldError = { field: 'when' | 'who'; text: string };
+
 export type BoardView = {
   /** The id of each quadrant's single Tab stop. Falls back to the first task. */
   tabStops: Partial<Record<Quadrant, string>>;
   editing?: Editing;
   /** Local 'YYYY-MM-DD'. Due status is derived from it on every render. */
   today: string;
+  /** By task id. Shown only while the row still has that kind of field. */
+  fieldErrors?: ReadonlyMap<string, FieldError>;
 };
 
 const VERBS: Record<Quadrant, string> = {
@@ -191,6 +196,7 @@ function buildStamps(task: Task, today: string, isNext: boolean): HTMLElement[] 
     promote.type = 'button';
     promote.tabIndex = -1;
     promote.dataset.move = 'do';
+    promote.dataset.control = 'promote';
     promote.setAttribute('aria-label', `Move to Do: ${task.title}`);
     out.push(promote);
   }
@@ -207,12 +213,31 @@ export function refreshStamps(li: HTMLElement, task: Task, today: string): void 
   slot.replaceChildren(...buildStamps(task, today, isNext));
 }
 
+/** Unique ids for the field errors, so each field's aria-describedby names its own. */
+let fieldErrorSeq = 0;
+
+/**
+ * The message element for a date or Who? field, tied to it by aria-describedby. No alert role:
+ * a rebuilt alert re-announces on every render; the app gives it one when it rejects a value.
+ */
+function fieldErrorFor(field: HTMLInputElement, text: string): HTMLElement {
+  const msg = el('span', 'task__field-error', text);
+  msg.id = `task-field-error-${++fieldErrorSeq}`;
+  field.setAttribute('aria-describedby', msg.id);
+  return msg;
+}
+
+/**
+ * Each control in a row carries `data-control`, unique within the row and the same on every
+ * render, so focus can be put back on a rebuilt row's matching control (#12).
+ */
 function renderTask(
   task: Task,
   tabStop: boolean,
   editing: Editing | undefined,
   today: string,
   isNext: boolean,
+  fieldError: FieldError | undefined,
 ): HTMLLIElement {
   const li = el('li', 'task');
   li.dataset.taskId = task.id;
@@ -223,6 +248,7 @@ function renderTask(
   check.type = 'checkbox';
   check.checked = task.done;
   check.tabIndex = -1;
+  check.dataset.control = 'check';
   check.setAttribute('aria-label', `Done: ${task.title}`);
   li.append(check);
 
@@ -230,6 +256,7 @@ function renderTask(
     const edit = el('input', 'task__edit');
     edit.type = 'text';
     edit.value = editing.draft;
+    edit.dataset.control = 'edit';
     edit.setAttribute('aria-label', 'Rename task');
     li.append(edit);
     const error = el('span', 'task__error', editing.error ?? '');
@@ -248,22 +275,27 @@ function renderTask(
     const when = el('input', 'task__when');
     when.type = 'date';
     when.value = task.when ?? '';
+    when.dataset.saved = when.value; // a value that differs from this is unsaved typing
+    when.dataset.control = 'when';
     when.setAttribute('aria-label', `Date for ${task.title}`);
-    li.append(when);
+    li.append(when, fieldErrorFor(when, fieldError?.field === 'when' ? fieldError.text : ''));
   } else if (quadrant === 'delegate') {
     const who = el('input', 'task__who');
     who.type = 'text';
     who.placeholder = 'Who?';
     who.value = task.who ?? '';
+    who.dataset.saved = who.value;
+    who.dataset.control = 'who';
     who.autocomplete = 'off';
     who.setAttribute('aria-label', `Who is handling ${task.title}`);
-    li.append(who);
+    li.append(who, fieldErrorFor(who, fieldError?.field === 'who' ? fieldError.text : ''));
   }
 
   if (!editing) {
     const renameButton = el('button', 'task__rename');
     renameButton.type = 'button';
     renameButton.tabIndex = -1;
+    renameButton.dataset.control = 'rename';
     renameButton.setAttribute('aria-label', `Rename ${task.title}`);
     renameButton.append(chip('↵'));
     li.append(renameButton);
@@ -275,6 +307,7 @@ function renderTask(
     b.type = 'button';
     b.tabIndex = -1;
     b.dataset.move = q.id;
+    b.dataset.control = `move-${q.id}`;
     b.setAttribute('aria-label', `Move to ${q.label}`);
     b.append(chip(q.key));
     moves.append(b);
@@ -284,6 +317,7 @@ function renderTask(
   const del = el('button', 'task__delete');
   del.type = 'button';
   del.tabIndex = -1;
+  del.dataset.control = 'delete';
   del.setAttribute('aria-label', `Delete ${task.title}`);
   del.append(chip('⌫'));
   li.append(del);
@@ -312,6 +346,7 @@ export function renderBoard(shell: Shell, tasks: readonly Task[], view: BoardVie
           view.editing?.id === t.id ? view.editing : undefined,
           view.today,
           q.id === 'do' && t.id === sorted[0]?.id,
+          view.fieldErrors?.get(t.id),
         );
         if (before && !before.has(t.id)) li.classList.add('is-new');
         return li;

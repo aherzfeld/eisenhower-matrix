@@ -110,7 +110,10 @@ button {
   text-decoration-thickness: 3px;
 }
 
-/* A small circled "!" for errors: the only use of --danger besides the banner rule. */
+/*
+ * A small circled "!" for errors. --danger is used only here, on the banner rule, and on a
+ * date or Who? field's error text (.task__field-error, board.css).
+ */
 .capture__message::before,
 .task__error::before,
 .import-confirm__error::before,

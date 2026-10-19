@@ -175,8 +175,109 @@ describe('due rechecks', () => {
     clock = new Date(2026, 2, 11, 0, 0, 0, 0);
     vi.advanceTimersByTime(12 * 3600 * 1000);
     expect(row('s').querySelector('.task__when')).toBe(date);
+    // The window losing focus fires focusout but leaves the field focused: still held.
     date.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    vi.advanceTimersByTime(0);
+    expect(row('s').querySelector('.task__when')).toBe(date);
+    date.blur(); // the render runs on the next task, once focus has landed
+    vi.advanceTimersByTime(0);
     expect(row('s').querySelector('.stamp--due')).not.toBeNull();
+  });
+
+  describe('focus after a deferred render (#12)', () => {
+    /** Focus leaves the field for `next`, as Tab would: focusout, then focus, then the next task. */
+    function moveFocus(from: HTMLElement, next: HTMLElement) {
+      key(from, 'Tab');
+      next.focus();
+      vi.advanceTimersByTime(0);
+    }
+
+    it('lands on the control in the same row that focus moved to, not on body', () => {
+      boot([dueTask()]);
+      const date = row('s').querySelector<HTMLInputElement>('.task__when')!;
+      date.focus();
+      clock = new Date(2026, 2, 11, 0, 0, 0, 0);
+      vi.advanceTimersByTime(12 * 3600 * 1000);
+      expect(row('s').querySelector('.task__when')).toBe(date); // deferred while typing
+      const rename = row('s').querySelector<HTMLElement>('.task__rename')!;
+      moveFocus(date, rename);
+      expect(row('s').querySelector('.stamp--due')).not.toBeNull(); // the render ran
+      expect(rename.isConnected).toBe(false); // and rebuilt the row
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement).toBe(row('s').querySelector('.task__rename'));
+    });
+
+    it('lands on the same control in another row', () => {
+      boot([dueTask(), task('o', 'Other', true, true)]);
+      const date = row('s').querySelector<HTMLInputElement>('.task__when')!;
+      date.focus();
+      clock = new Date(2026, 2, 11, 0, 0, 0, 0);
+      vi.advanceTimersByTime(12 * 3600 * 1000);
+      moveFocus(date, row('o').querySelector<HTMLElement>('.task__delete')!);
+      expect(document.activeElement).toBe(row('o').querySelector('.task__delete'));
+    });
+
+    it('falls back to the row when the control is gone after the render', () => {
+      const { storage } = boot([task('s', 'Today', false, true, { when: '2026-03-10' })]);
+      const date = row('s').querySelector<HTMLInputElement>('.task__when')!;
+      date.focus();
+      const state = app!.getState();
+      storage.simulateExternalChange({
+        ...state,
+        tasks: state.tasks.map((t) => ({ ...t, when: '2026-03-20' })),
+      });
+      const promote = row('s').querySelector<HTMLElement>('.task__promote')!; // still Due on screen
+      moveFocus(date, promote);
+      expect(row('s').querySelector('.task__promote')).toBeNull();
+      expect(document.activeElement).toBe(row('s'));
+    });
+
+    /** A Delegate row whose Who? field held a render past midnight. */
+    function heldOnWho() {
+      boot([task('g', 'Send quote', true, false)]);
+      const who = row('g').querySelector<HTMLInputElement>('.task__who')!;
+      who.focus();
+      clock = new Date(2026, 2, 11, 0, 0, 0, 0);
+      vi.advanceTimersByTime(12 * 3600 * 1000);
+      expect(row('g').querySelector('.task__who')).toBe(who); // held
+      return who;
+    }
+    const press = (target: Element, type: 'pointerdown' | 'pointerup') =>
+      target.dispatchEvent(new MouseEvent(type, { bubbles: true }));
+
+    it('holds the render through a press, so the control under the pointer gets its click', () => {
+      heldOnWho();
+      const move = row('g').querySelector<HTMLElement>('[data-move="do"]')!;
+      press(move, 'pointerdown');
+      move.focus(); // mousedown moves focus out of the field
+      vi.advanceTimersByTime(0);
+      expect(move.isConnected).toBe(true); // not rebuilt under the pointer
+      press(move, 'pointerup');
+      move.click();
+      vi.advanceTimersByTime(0);
+      expect(titles('do')).toEqual(['Send quote']);
+      expect(document.activeElement).toBe(row('g'));
+    });
+
+    it('runs the held render once a press ends without a click', () => {
+      heldOnWho();
+      const move = row('g').querySelector<HTMLElement>('[data-move="do"]')!;
+      press(move, 'pointerdown');
+      move.focus();
+      press(document.body, 'pointerup'); // released elsewhere: no click
+      vi.advanceTimersByTime(0);
+      expect(move.isConnected).toBe(false); // the render ran
+      expect(document.activeElement).toBe(row('g').querySelector('[data-move="do"]'));
+      expect(titles('delegate')).toEqual(['Send quote']);
+    });
+
+    it('falls back to the capture input when the row is gone', () => {
+      const { storage } = boot([dueTask()]);
+      row('s').querySelector<HTMLInputElement>('.task__when')!.focus();
+      storage.simulateExternalChange({ ...app!.getState(), tasks: [] });
+      expect(root.querySelector('.task')).toBeNull();
+      expect(document.activeElement).toBe(input());
+    });
   });
 
   it('fires once at each local midnight for a whole year, DST days included, with one timer armed', () => {
@@ -225,23 +326,86 @@ describe('Delegate and Do follow-through (AC10)', () => {
     expect(row('d').querySelector('.task__who')).toBeNull();
   });
 
-  it('rejects an over-long who without losing the old value, and says why', () => {
+  /** The error beside a row's date or Who? field (#14). */
+  const fieldError = (id: string) => row(id).querySelector<HTMLElement>('.task__field-error')!;
+  const WHO_TOO_LONG = 'Who must be at most 80 characters.';
+
+  // Changed for #14: these asserted the error in .capture__message; it now sits beside the field.
+  it('rejects an over-long who without losing the old value, and says why beside the field', () => {
     boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
     const who = row('g').querySelector<HTMLInputElement>('.task__who')!;
     setField(who, 'x'.repeat(81));
     expect(taskIn('g').who).toBe('Sam');
     expect(who.value).toBe('Sam'); // the field shows what was saved, not the rejected text
-    expect(message().textContent).toBe('Who must be at most 80 characters.');
+    const error = fieldError('g');
+    expect(error.textContent).toBe(WHO_TOO_LONG);
+    expect(error.getAttribute('role')).toBe('alert'); // announced
+    expect(error.id).not.toBe('');
+    expect(who.getAttribute('aria-describedby')?.split(' ')).toContain(error.id);
+    expect(message().textContent).toBe('');
     expect(row('g').querySelector('.stamp--waiting')!.textContent).toBe('Waiting on Sam');
   });
 
-  it('clears that message once a later save succeeds', () => {
+  it('clears that error once the field saves', () => {
     boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
     const who = row('g').querySelector<HTMLInputElement>('.task__who')!;
     setField(who, 'x'.repeat(81));
     setField(who, 'Ana');
     expect(taskIn('g').who).toBe('Ana');
+    expect(fieldError('g').textContent).toBe('');
     expect(message().textContent).toBe('');
+  });
+
+  it('clears that error when the field is put back to its saved value', () => {
+    boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
+    const who = row('g').querySelector<HTMLInputElement>('.task__who')!;
+    setField(who, 'x'.repeat(81));
+    setField(who, 'Sam');
+    expect(fieldError('g').textContent).toBe('');
+  });
+
+  it('keeps the error beside its own field through a re-render, and off the others', () => {
+    boot([task('g', 'Send quote', true, false, { who: 'Sam' }), task('h', 'Book room', true, false, { order: 1 })]);
+    setField(row('g').querySelector<HTMLInputElement>('.task__who')!, 'x'.repeat(81));
+    app!.render();
+    expect(fieldError('g').textContent).toBe(WHO_TOO_LONG);
+    expect(fieldError('h').textContent).toBe('');
+    expect(message().textContent).toBe('');
+  });
+
+  it('drops the error once its field leaves the row, so a move back does not bring it back', () => {
+    boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
+    setField(row('g').querySelector<HTMLInputElement>('.task__who')!, 'x'.repeat(81));
+    key(row('g'), '1'); // to Do: no Who? field
+    key(row('g'), '3'); // back to Delegate
+    expect(titles('delegate')).toEqual(['Send quote']);
+    expect(fieldError('g').textContent).toBe('');
+  });
+
+  it('announces the error once, not again on every re-render', () => {
+    boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
+    setField(row('g').querySelector<HTMLInputElement>('.task__who')!, 'x'.repeat(81));
+    expect(fieldError('g').getAttribute('role')).toBe('alert');
+    app!.render();
+    expect(fieldError('g').textContent).toBe(WHO_TOO_LONG); // still shown
+    expect(fieldError('g').getAttribute('role')).toBeNull(); // but a rebuilt alert would re-announce
+  });
+
+  it('shows no error on a task deleted and brought back by undo', () => {
+    boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
+    setField(row('g').querySelector<HTMLInputElement>('.task__who')!, 'x'.repeat(81));
+    app!.deleteTask('g');
+    app!.undo();
+    expect(titles('delegate')).toEqual(['Send quote']);
+    expect(fieldError('g').textContent).toBe('');
+  });
+
+  it('gives every date and Who? field its own error element, and none to other rows', () => {
+    boot([task('g', 'Send quote', true, false), task('s', 'Pay rent', false, true), task('d', 'Fire', true, true)]);
+    const ids = [fieldError('g').id, fieldError('s').id];
+    expect(new Set(ids).size).toBe(2);
+    expect(row('s').querySelector('.task__when')!.getAttribute('aria-describedby')).toBe(ids[1]);
+    expect(row('d').querySelector('.task__field-error')).toBeNull();
   });
 
   it('shows the trimmed who in the field, and an empty field for whitespace', () => {

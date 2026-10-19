@@ -41,7 +41,7 @@ Light ("white stock"):
 | `--delegate-tint` | `#FFF8B3` | Delegate body |
 | `--delete` | `#A5AAA8` | Delete band (grey) |
 | `--delete-tint` | `#E3E5E4` | Delete body |
-| `--danger` | `#C8102E` | Error banner rule and icon only |
+| `--danger` | `#C8102E` | Error banner rule, error icon, and a date or Who? field's error text only |
 
 Dark ("black stock"): `--paper #121315`, `--sheet #1C1E22`, `--ink #ECEDE8`,
 `--ink-muted #A3A8B8`, `--rule #33363D`, tints `--do-tint #3A1A2C`,
@@ -87,6 +87,9 @@ toggle in v1.
   band ink when done. Title, then inline extras: a date field in Schedule, a
   "Who?" field in Delegate. Move buttons `1`–`4` appear as small key chips on
   hover or focus only. The focused row gets a 2px `--ink` outline, 2px offset.
+- **Field errors:** a rejected date or Who? value's message sits on its own
+  line under that field, right-aligned, in mono 0.75rem `--danger`, tied to the
+  field by `aria-describedby`.
 - **Stamps:** NEXT (Do), DUE (Schedule) and WAITING ON <who> (Delegate) are
   mono 0.75rem uppercase labels in a 1.5px border, rotated -2deg, coloured
   `--ink`, with the band ink as background for NEXT and DUE.

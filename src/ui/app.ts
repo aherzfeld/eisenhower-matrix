@@ -7,11 +7,11 @@ import { clearDone, dropQuadrant, removeOne, restore, type Removal, type Removal
 import { validateTitle, type Result } from '../core/validate';
 import { downloadText, safeFilename } from '../io/download';
 import { backupReminder, renderBackupStatus } from './backup';
-import { EARLIER_UNREADABLE, lostChangesWarning, renderBanner, type Notice } from './banner';
+import { EARLIER_UNREADABLE, deletedWhileEditingWarning, lostChangesWarning, renderBanner, type Notice } from './banner';
 import { START, paintSquares, renderPrompt, squareClasses, triageKey, type Triage } from './capture';
 import { isComposing, resolveKey, type KeyAction } from './keys';
 import { reorderVisible } from './order';
-import { buildShell, refreshStamps, renderBoard, sortedFor, type Editing, type Shell } from './render';
+import { buildShell, refreshStamps, renderBoard, sortedFor, type Editing, type FieldError, type Shell } from './render';
 import { reviewKey, reviewProgress, settleReview, startReview, type Review } from './review';
 import { browserTimers, createToaster, type Timers } from './toast';
 import { createTransfer, type SaveOutcome } from './transfer';
@@ -62,6 +62,9 @@ export type App = {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** The quadrants whose rows have a date or Who? field, and which. */
+const FIELD_OF: Partial<Record<Quadrant, FieldError['field']>> = { schedule: 'when', delegate: 'who' };
+
 export const UPDATED_ELSEWHERE = 'Updated from another tab';
 export const NOT_SAVED_CONFLICT = "Changed in another tab, so this wasn't saved. Try again.";
 
@@ -84,6 +87,8 @@ export function createApp({
   let saveWarning: string | undefined;
   /** Changes a reload discarded; shown until the next successful save. */
   let lostWarning: string | undefined;
+  /** Unsaved field text whose task a reload found deleted, one per task; shown until the next successful save. */
+  let deletedWarnings: string[] = [];
   /** Commits since the last successful save, which a reload would discard. */
   let unsaved = 0;
   /** Counts reloads, so a caller can tell its commit ended in one. */
@@ -99,6 +104,8 @@ export function createApp({
   let midnightTimer: unknown;
   let pendingTitle = '';
   let editing: Editing | undefined;
+  /** Rejected date or Who? values by task id, shown beside the field until it next saves (#14). */
+  const fieldErrors = new Map<string, FieldError>();
   const tabStops: Partial<Record<Quadrant, string>> = {};
 
   const rowOf = (t: EventTarget | null): HTMLElement | null =>
@@ -114,6 +121,7 @@ export function createApp({
     const list: Notice[] = [];
     const candidates: (Notice | undefined)[] = [
       lostWarning === undefined ? undefined : { text: lostWarning },
+      ...deletedWarnings.map((text) => ({ text })),
       saveWarning === undefined ? undefined : { text: saveWarning },
       rawNotice,
       loadWarning === undefined ? undefined : { text: loadWarning },
@@ -136,10 +144,24 @@ export function createApp({
     renderBackupStatus(shell.backupStatus, backupReminder(state.lastExportAt, new Date(now())));
   }
 
+  /** Text typed into a date or Who? field and not saved yet, with the task it belongs to. */
+  function unsavedFieldText(): { task: Task; text: string }[] {
+    const out: { task: Task; text: string }[] = [];
+    for (const field of root.querySelectorAll<HTMLInputElement>('.task__when, .task__who')) {
+      const task = taskOf(rowOf(field)?.dataset.taskId ?? '');
+      if (task && field.value !== '' && field.value !== field.dataset.saved) out.push({ task, text: field.value });
+    }
+    return out;
+  }
+
   /** Takes a load's state and warnings. Returns how many unsaved changes it discarded. */
   function applyLoad(res: LoadResult): number {
     const lost = unsaved;
+    const typed = unsavedFieldText();
     state = res.state;
+    for (const { task, text } of typed) {
+      if (!taskOf(task.id)) deletedWarnings.push(deletedWhileEditingWarning(task.title, text));
+    }
     loadWarning = res.warning;
     if (res.raw !== undefined && res.warning !== undefined) rawNotice = { text: res.warning, raw: res.raw };
     else if (rawNotice) rawNotice = { text: EARLIER_UNREADABLE, raw: rawNotice.raw };
@@ -165,6 +187,7 @@ export function createApp({
       unsaved = 0;
       saveWarning = undefined;
       lostWarning = undefined;
+      deletedWarnings = [];
       updateBanner();
       return 'saved';
     }
@@ -196,23 +219,65 @@ export function createApp({
     else row.focus();
   }
 
+  /** A focused element in one of this board's rows, as task id plus control (#12). */
+  type FocusSpot = { id: string; control?: string };
+
+  function spotOf(target: Element | null): FocusSpot | undefined {
+    const row = rowOf(target);
+    const id = row?.dataset.taskId;
+    if (!row || !id || !root.contains(row)) return undefined;
+    return { id, control: target instanceof HTMLElement ? target.dataset.control : undefined };
+  }
+
+  /** Focuses the rebuilt twin of a control, else its row, else (the row is gone) the capture input. */
+  function restoreFocus({ id, control }: FocusSpot) {
+    const row = findRow(id);
+    if (!row) return focusCapture();
+    const twin = control ? row.querySelector<HTMLElement>(`[data-control="${control}"]`) : null;
+    if (twin && !twin.hidden) twin.focus();
+    else focusRow(id);
+  }
+
+  /** Focus goes back to the focused control's rebuilt twin, or with `focusId` to that task's row. */
   function render(focusId?: string) {
-    const id = focusId ?? rowOf(doc.activeElement)?.dataset.taskId;
+    const spot = focusId ? { id: focusId } : spotOf(doc.activeElement);
     if (focusId) {
       const t = taskOf(focusId);
       if (t) tabStops[quadrantOf(t)] = focusId;
     }
     renderedToday = today();
     renderStale = false;
-    renderBoard(shell, state.tasks, { tabStops, editing, today: renderedToday });
+    for (const [id, error] of fieldErrors) {
+      const t = taskOf(id); // gone, or moved to a quadrant without that field: the error is stale
+      if (!t || FIELD_OF[quadrantOf(t)] !== error.field) fieldErrors.delete(id);
+    }
+    renderBoard(shell, state.tasks, { tabStops, editing, today: renderedToday, fieldErrors });
     updateBackupStatus();
-    if (id) focusRow(id);
+    if (spot) restoreFocus(spot);
   }
 
   /**
    * Renders now, unless the user is typing in a field of a task that still exists: then on
    * focusout, so a reload never wipes a half-typed date or name.
    */
+  /** A pointer is down on the board: a render now would rebuild the node under it and lose its click. */
+  let pressing = false;
+  let flushQueued = false;
+
+  /**
+   * Runs a held render once focus has left the task fields. On the next task, so focus has
+   * landed (activeElement is body during focusout) and a press's mouseup and click, which come
+   * in the same task as its pointerup or, for a tap, its mousedown, reach the nodes they began on.
+   */
+  function flushHeldRender() {
+    if (flushQueued) return;
+    flushQueued = true;
+    timers.setTimeout(() => {
+      flushQueued = false;
+      if (renderStale && !pressing && !inTaskField()) render();
+    }, 0);
+  }
+
   function renderSoon() {
     const id = rowOf(doc.activeElement)?.dataset.taskId;
     if (inTaskField() && id && taskOf(id)) {
@@ -384,11 +449,20 @@ export function createApp({
       { render: false },
     );
     const saved = taskOf(id) ?? current;
-    shell.message.textContent = result.ok ? '' : result.error;
+    if (result.ok) fieldErrors.delete(id);
+    else fieldErrors.set(id, { field: isWhen ? 'when' : 'who', text: result.error });
+    // The row on screen now: a refused-as-stale save has rebuilt it.
+    const message = findRow(id)?.querySelector('.task__field-error');
+    if (message) {
+      // Announced once, here; the rows each render rebuilds show it without an alert role.
+      if (!result.ok) message.setAttribute('role', 'alert');
+      message.textContent = result.ok ? '' : result.error;
+    }
     // Only when it differs: writing a date input, even with its own value, wipes the parts of
     // a date the user is part-way through retyping (Chrome reports those as '').
     const shown = (isWhen ? saved.when : saved.who) ?? '';
     if (field.value !== shown) field.value = shown;
+    field.dataset.saved = shown;
     refreshStamps(rowEl, saved, today());
   }
 
@@ -647,11 +721,19 @@ export function createApp({
     tabStops[quadrantOf(task)] = id;
     for (const r of row.parentElement?.children ?? []) (r as HTMLElement).tabIndex = r === row ? 0 : -1;
   }, opts);
-  root.addEventListener('focusout', (event) => {
-    const next = event.relatedTarget;
-    const stillInField = next instanceof Element && next.matches('.task__when, .task__who, .task__edit');
-    if (renderStale && !stillInField) render(); // activeElement may not have moved yet, so not recheckDue()
+  root.addEventListener('focusout', () => {
+    if (renderStale && !pressing) flushHeldRender(); // a press flushes as it ends, below
   }, opts);
+  root.addEventListener('pointerdown', () => {
+    pressing = true;
+  }, opts);
+  for (const type of ['pointerup', 'pointercancel']) {
+    doc.addEventListener(type, () => {
+      if (!pressing) return;
+      pressing = false;
+      if (renderStale) flushHeldRender();
+    }, opts);
+  }
   doc.addEventListener('keydown', onDocKeydown, opts);
   doc.addEventListener('visibilitychange', () => {
     if (doc.visibilityState !== 'visible') return;

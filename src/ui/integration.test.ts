@@ -226,7 +226,7 @@ describe('another tab (AC12)', () => {
     expect(document.activeElement).toBe(b.row('x'));
   });
 
-  it('does not tear down a field the user is typing in; the board catches up when they leave it', () => {
+  it('does not tear down a field the user is typing in; the board catches up when they leave it', async () => {
     const ls = new SharedStore();
     writeElsewhere(ls, () => [task('w', 'Delegate me', true, false)]);
     const b = openTab(ls);
@@ -239,8 +239,40 @@ describe('another tab (AC12)', () => {
     expect(who.isConnected).toBe(true);
     expect(who.value).toBe('Sa');
     expect(b.app.getState().tasks.map((t) => t.id)).toEqual(['w', 'o']);
-    who.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    who.blur();
+    await new Promise((resolve) => setTimeout(resolve, 0)); // the held render runs on the next task
     expect(b.titles('delegate')).toEqual(['Delegate me', 'Other']);
+  });
+
+  it('a Who? refused as stale says so beside the rebuilt field, not under the capture input (#14)', () => {
+    const ls = new SharedStore();
+    writeElsewhere(ls, () => [task('w', 'Delegate me', true, false)]);
+    const b = openTab(ls);
+    writeElsewhere(ls, (tasks) => [...tasks, task('o', 'Other', true, false, { order: 1 })]); // event not yet here
+    const who = b.row('w')!.querySelector<HTMLInputElement>('.task__who')!;
+    who.focus();
+    who.value = 'Sam';
+    who.dispatchEvent(new Event('change', { bubbles: true }));
+    const field = b.row('w')!.querySelector<HTMLInputElement>('.task__who')!;
+    const error = b.row('w')!.querySelector<HTMLElement>('.task__field-error')!;
+    expect(error.textContent).toBe(NOT_SAVED_CONFLICT);
+    expect(field.getAttribute('aria-describedby')).toBe(error.id);
+    expect(b.root.querySelector('.capture__message')!.textContent).toBe('');
+    field.value = 'Sam';
+    field.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(storedTasks(ls).find((t) => t.id === 'w')!.who).toBe('Sam');
+    expect(b.row('w')!.querySelector('.task__field-error')!.textContent).toBe('');
+  });
+
+  it('keeps focus on the same control when another tab moves its row to another quadrant (#12)', () => {
+    const ls = new SharedStore();
+    writeElsewhere(ls, () => [task('m', 'Movable', true, true), task('k', 'Keep', true, true, { order: 1 })]);
+    const b = openTab(ls);
+    b.row('m')!.querySelector<HTMLElement>('.task__delete')!.focus();
+    writeElsewhere(ls, (tasks) => tasks.map((t) => (t.id === 'm' ? { ...t, urgent: false } : t)));
+    b.notify();
+    expect(b.titles('schedule')).toEqual(['Movable']);
+    expect(document.activeElement).toBe(b.row('m')!.querySelector('.task__delete'));
   });
 
   it('a rename refused as stale stays open with the draft, so Enter saves it on the fresh data', () => {
@@ -288,6 +320,99 @@ describe('another tab (AC12)', () => {
     b.notify();
     expect(b.root.querySelector('.task__edit')).toBeNull();
     expect(b.titles('do')).toEqual([]);
+  });
+});
+
+describe('a field whose task another tab deleted (#15)', () => {
+  // Two apps share one jsdom document, so B's delete also moves focus out of A's field; real
+  // tabs keep their own focus. The banner must not depend on where focus is.
+  function setUp() {
+    const ls = new SharedStore();
+    writeElsewhere(ls, () => [task('w', 'Call Sam', true, false, { who: 'Sam' }), task('o', 'Other', true, true)]);
+    const a = openTab(ls, 'a');
+    const b = openTab(ls, 'b');
+    const who = a.row('w')!.querySelector<HTMLInputElement>('.task__who')!;
+    who.focus();
+    return { ls, a, b, who };
+  }
+  const DELETED = `'Call Sam' was deleted in another tab. Your unsaved text was: "Sam Lee"`;
+
+  it('keeps the unsaved text in a persistent banner, and does not bring the task back', () => {
+    const { ls, a, b, who } = setUp();
+    who.value = 'Sam Lee'; // typed, not yet saved (no change event)
+    who.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(b.app.deleteTask('w')).toBe(true);
+    a.notify();
+    expect(a.row('w')).toBeNull();
+    expect(a.banners()).toEqual([DELETED]);
+
+    // Persistent: another tab's later change does not clear it.
+    writeElsewhere(ls, (tasks) => [...tasks, task('n', 'New', true, true, { order: 1 })]);
+    a.notify();
+    expect(a.banners()).toEqual([DELETED]);
+
+    // Like the other banners, it clears on this tab's next successful save.
+    expect(a.app.commit((tasks) => toggleDone(tasks, 'o', NOW)).ok).toBe(true);
+    expect(a.banners()).toEqual([]);
+    expect(storedTasks(ls).map((t) => t.id)).not.toContain('w');
+  });
+
+  it('also when the deletion is found by the save of that field', () => {
+    const { ls, a, b, who } = setUp();
+    expect(b.app.deleteTask('w')).toBe(true); // A has not heard yet
+    who.value = 'Sam Lee';
+    who.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(a.row('w')).toBeNull();
+    expect(a.banners()).toContain(DELETED);
+    expect(storedTasks(ls).map((t) => t.id)).not.toContain('w');
+  });
+
+  it('quotes the unsaved text as text, never as markup', () => {
+    const { a, b, who } = setUp();
+    const typed = `<img src=x onerror="alert(1)"> 'Sam' "Lee"`;
+    who.value = typed;
+    expect(b.app.deleteTask('w')).toBe(true);
+    a.notify();
+    const slot = a.root.querySelector('.banner-slot')!;
+    expect(slot.querySelector('img')).toBeNull();
+    expect(a.banners()).toEqual([`'Call Sam' was deleted in another tab. Your unsaved text was: "${typed}"`]);
+  });
+
+  it('keeps the text of each deleted task until a save, not only the latest', () => {
+    const { ls, a, b, who } = setUp();
+    writeElsewhere(ls, (tasks) => [...tasks, task('v', 'Call Vic', true, false, { order: 1 })]);
+    a.notify();
+    b.notify();
+    who.value = 'Sam Lee';
+    expect(b.app.deleteTask('w')).toBe(true);
+    a.notify();
+    const vic = a.row('v')!.querySelector<HTMLInputElement>('.task__who')!;
+    vic.focus();
+    vic.value = 'Vic Ray';
+    expect(b.app.deleteTask('v')).toBe(true);
+    a.notify();
+    expect(a.banners()).toEqual([
+      DELETED,
+      `'Call Vic' was deleted in another tab. Your unsaved text was: "Vic Ray"`,
+    ]);
+  });
+
+  it('shows no banner when the field held nothing unsaved', () => {
+    const { a, b } = setUp();
+    expect(b.app.deleteTask('w')).toBe(true);
+    a.notify();
+    expect(a.row('w')).toBeNull();
+    expect(a.banners()).toEqual([]);
+  });
+
+  it('shows no banner for a value that was saved before the delete', () => {
+    const { a, b, who } = setUp();
+    who.value = 'Sam Lee';
+    who.dispatchEvent(new Event('change', { bubbles: true }));
+    b.notify();
+    expect(b.app.deleteTask('w')).toBe(true);
+    a.notify();
+    expect(a.banners()).toEqual([]);
   });
 });
 
