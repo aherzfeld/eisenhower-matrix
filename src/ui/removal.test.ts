@@ -320,6 +320,29 @@ describe('guards', () => {
     expect(toastText()).toBeNull();
   });
 
+  it('holding Delete removes only the focused task, not each row focus moves to', () => {
+    // Focus moves to the next row after a delete, so auto-repeat would empty the quadrant
+    // while Undo could bring back only the last one.
+    boot({ tasks: sam() });
+    pressDelete('sam');
+    for (let i = 0; i < 3; i++) {
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Delete', repeat: true, bubbles: true, cancelable: true }),
+      );
+    }
+    expect(titles('do')).toEqual(['B', 'C']);
+    expect(toastText()).toBe("Deleted 'Call Sam'");
+  });
+
+  it('Delete is ignored during IME composition', () => {
+    boot({ tasks: sam() });
+    row('b')!.focus();
+    const init = { bubbles: true, cancelable: true };
+    row('b')!.dispatchEvent(new KeyboardEvent('keydown', { ...init, key: 'Delete', isComposing: true }));
+    row('b')!.dispatchEvent(new KeyboardEvent('keydown', { ...init, key: 'Backspace', keyCode: 229 }));
+    expect(titles('do')).toEqual(['Call Sam', 'B', 'C']);
+  });
+
   it('a failed save during a removal shows the banner; the removal holds in memory and can be undone', () => {
     const storage = createMemoryStorage({ initial: { ...emptyState(), tasks: sam() }, mode: 'memory' });
     boot({ storage });

@@ -72,4 +72,9 @@ describe('resolveKey', () => {
     expect(resolveKey(press({ key: 'Backspace', metaKey: true }))).toBeUndefined();
     expect(resolveKey(press({ key: 'Delete', altKey: true }))).toBeUndefined();
   });
+
+  it('ignores a held Delete or Backspace (auto-repeat), so one press removes one task', () => {
+    expect(resolveKey(press({ key: 'Delete', repeat: true }))).toBeUndefined();
+    expect(resolveKey(press({ key: 'Backspace', repeat: true }))).toBeUndefined();
+  });
 });

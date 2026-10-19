@@ -47,7 +47,9 @@ export function resolveKey(event: KeyboardEvent): KeyAction | undefined {
   if (quadrant) return { type: 'move', quadrant };
   if (key === ' ') return { type: 'toggleDone' };
   if (key === 'Enter') return { type: 'rename' };
-  if (key === 'Delete' || key === 'Backspace') return { type: 'remove' };
+  // Not on auto-repeat: focus moves to the next row after a delete, so a held key would
+  // empty the quadrant while Undo covers only the last removal.
+  if (key === 'Delete' || key === 'Backspace') return event.repeat ? undefined : { type: 'remove' };
   // Later tasks bind here: 'r' starts review (T9).
   return undefined;
 }
