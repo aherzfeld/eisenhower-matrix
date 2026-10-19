@@ -46,7 +46,7 @@ describe('resolveKey', () => {
   });
 
   it('ignores everything typed into an input, textarea or contenteditable', () => {
-    const targets = [
+    const targets: HTMLElement[] = [
       document.createElement('input'),
       document.createElement('textarea'),
       document.createElement('select'),
