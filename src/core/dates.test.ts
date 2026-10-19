@@ -88,4 +88,16 @@ describe('daysSince (local calendar days)', () => {
   ])('%s', (_label, then, days) => {
     expect(daysSince(then.toISOString(), now)).toBe(days);
   });
+
+  // A day that is 23 hours long (spring forward) or 25 (fall back) still counts as one day.
+  it.each<[string, Date, Date, number]>([
+    ['across US spring forward', local(2026, 3, 7, 12), local(2026, 3, 9, 0, 30), 2],
+    ['across US fall back', local(2026, 10, 31, 23, 30), local(2026, 11, 1, 23, 45), 1],
+    ['same day as US fall back', local(2026, 11, 1, 0, 15), local(2026, 11, 1, 23, 45), 0],
+    ['across NZ spring forward', local(2026, 9, 26, 12), local(2026, 9, 28, 0, 30), 2],
+    ['across NZ fall back', local(2026, 4, 4, 23, 30), local(2026, 4, 5, 23, 45), 1],
+    ['same day as NZ fall back', local(2026, 4, 5, 0, 15), local(2026, 4, 5, 23, 45), 0],
+  ])('DST: %s', (_label, then, now, days) => {
+    expect(daysSince(then.toISOString(), now)).toBe(days);
+  });
 });
