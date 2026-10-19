@@ -11,6 +11,7 @@ import {
   type StoredState,
   type Task,
 } from './task';
+import { clearDone, dropQuadrant, removeOne, restore, type RemovalRecord } from './undo';
 import type { Result } from './validate';
 
 const T0 = '2026-10-19T12:00:00.000Z';
@@ -227,17 +228,18 @@ describe('parse never throws', () => {
 
 describe('AC13: anything reachable through core ops round-trips', () => {
   it('serialize → parse is the identity over random op sequences', () => {
-    const seen = { maxTasks: 0, when: 0, who: 0, done: 0, moved: 0 };
+    const seen = { maxTasks: 0, when: 0, who: 0, done: 0, moved: 0, restored: 0 };
     for (let seed = 1; seed <= 300; seed++) {
       const rnd = rng(seed);
       let tasks: Task[] = [];
       let nextId = 0;
+      let lastRemoval: RemovalRecord | undefined;
       const steps = 1 + Math.floor(rnd() * 40);
       for (let i = 0; i < steps; i++) {
         const now = randomTimestamp(rnd);
         const pickId = () => (tasks.length && rnd() < 0.9 ? tasks[Math.floor(rnd() * tasks.length)]!.id : 'missing');
         let r: Result<Task[]>;
-        switch (Math.floor(rnd() * 7)) {
+        switch (Math.floor(rnd() * 9)) {
           case 0:
             r = createTask(
               tasks,
@@ -266,8 +268,24 @@ describe('AC13: anything reachable through core ops round-trips', () => {
           case 5:
             r = toggleDone(tasks, pickId(), now);
             break;
-          default:
+          case 6:
             r = reorder(tasks, pickId(), rnd() < 0.5 ? 'up' : 'down', now);
+            break;
+          case 7: {
+            // A removal of each kind; the next undo restores the latest one, as the toast does.
+            const kind = rnd();
+            const one = removeOne(tasks, pickId());
+            const removal =
+              kind < 0.6 ? (one.ok ? one.value : undefined) : kind < 0.8 ? clearDone(tasks) : dropQuadrant(tasks, 'delete');
+            if (removal) lastRemoval = removal.record;
+            r = removal ? { ok: true, value: removal.tasks } : { ok: false, error: 'nothing removed' };
+            break;
+          }
+          default: {
+            const back = lastRemoval ? restore(tasks, lastRemoval) : tasks;
+            if (back !== tasks) seen.restored++;
+            r = { ok: true, value: back };
+          }
         }
         if (r.ok) tasks = r.value;
       }
@@ -289,7 +307,7 @@ describe('AC13: anything reachable through core ops round-trips', () => {
     }
     // The generator must actually reach interesting states, or the property proves little.
     expect(seen.maxTasks).toBeGreaterThan(8);
-    for (const n of [seen.when, seen.who, seen.done, seen.moved]) expect(n).toBeGreaterThan(50);
+    for (const n of [seen.when, seen.who, seen.done, seen.moved, seen.restored]) expect(n).toBeGreaterThan(50);
   });
 });
 
