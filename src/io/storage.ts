@@ -74,15 +74,29 @@ export function createBrowserStorage({
    */
   function ensureBackup(store: KeyValueStore, label: string, raw: string): boolean {
     try {
-      if (hasBackup(store, raw)) return true;
-      const base = `${BACKUP_PREFIX}${label ? `${label}:` : ''}${new Date(now()).toISOString()}`;
-      let key = base;
-      for (let i = 1; store.getItem(key) !== null; i++) {
-        if (i > 100) return false;
-        key = `${base}-${i}`;
-      }
-      store.setItem(key, raw);
-      return store.getItem(key) === raw;
+      return hasBackup(store, raw) || writeNewBackup(store, label, raw);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Writes `raw` to an unused backup key and checks it reads back. May throw. */
+  function writeNewBackup(store: KeyValueStore, label: string, raw: string): boolean {
+    const base = `${BACKUP_PREFIX}${label ? `${label}:` : ''}${new Date(now()).toISOString()}`;
+    let key = base;
+    for (let i = 1; store.getItem(key) !== null; i++) {
+      if (i > 100) return false;
+      key = `${base}-${i}`;
+    }
+    store.setItem(key, raw);
+    return store.getItem(key) === raw;
+  }
+
+  /** Always a fresh key, so an earlier backup is never overwritten. Never throws. */
+  function writeBackup(label: string, text: string): boolean {
+    if (lock?.mode === 'readonly') return false;
+    try {
+      return writeNewBackup(storage(), label, text);
     } catch {
       return false;
     }
@@ -196,7 +210,7 @@ export function createBrowserStorage({
     return () => events?.removeEventListener('storage', listener);
   }
 
-  return { load, save, subscribe };
+  return { load, save, subscribe, writeBackup };
 }
 
 /**
