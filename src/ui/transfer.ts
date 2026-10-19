@@ -40,8 +40,16 @@ export type Transfer = {
    */
   handleKey(event: KeyboardEvent): boolean;
   exportTasks(): void;
-  /** Reads and validates `file`, then shows the confirmation (or why it was rejected). */
+  /**
+   * Reads and validates `file`, then shows the confirmation (or why it was rejected). Only the
+   * latest call opens the panel: a slower read of an earlier file is dropped.
+   */
   importFile(file: File): Promise<void>;
+  /**
+   * The board was reloaded from another tab. An open confirmation is brought up to date and
+   * says so, so Replace never stands on a count the user was not shown.
+   */
+  boardChanged(): void;
 };
 
 export const BACKUP_FAILED = "Nothing was imported: your current tasks couldn't be backed up first.";
@@ -103,6 +111,8 @@ export function createTransfer(deps: TransferDeps): Transfer {
   /** The file's validated board, while the confirmation offers it. */
   let pending: { state: StoredState; name: string } | undefined;
   let inerted: Element[] = [];
+  /** Counts importFile calls, so a read that finishes after a newer one is dropped. */
+  let reads = 0;
 
   function exportTasks() {
     const state = deps.getState();
@@ -171,13 +181,16 @@ export function createTransfer(deps: TransferDeps): Transfer {
 
   async function importFile(file: File) {
     const name = file.name || 'this file';
+    const read = ++reads;
     let text: string;
     try {
       text = await file.text();
     } catch {
+      if (read !== reads) return;
       pending = undefined;
       return open(`Can't import ${name}.`, UNREADABLE_FILE);
     }
+    if (read !== reads) return;
     const parsed = parse(text);
     if (!parsed.ok) {
       pending = undefined;
@@ -217,6 +230,12 @@ export function createTransfer(deps: TransferDeps): Transfer {
     );
   }
 
+  function boardChanged() {
+    if (!panel || !pending) return;
+    panel.text.textContent = confirmText(deps.getState().tasks.length, pending.state.tasks.length, pending.name);
+    panel.error.textContent = IMPORT_CONFLICT;
+  }
+
   function focusables(): HTMLElement[] {
     if (!panel) return [];
     return [panel.replace, panel.cancel].filter((b) => !b.hidden);
@@ -246,5 +265,5 @@ export function createTransfer(deps: TransferDeps): Transfer {
     if (file) void importFile(file);
   }, opts);
 
-  return { isOpen: () => panel !== undefined, handleKey, exportTasks, importFile };
+  return { isOpen: () => panel !== undefined, handleKey, exportTasks, importFile, boardChanged };
 }

@@ -184,6 +184,7 @@ export function createApp({
     if (lost === 0) toaster.announce(UPDATED_ELSEWHERE);
     renderSoon();
     if (review) syncReview();
+    transfer.boardChanged();
   }
 
   function focusRow(id: string) {

@@ -7,6 +7,7 @@ import { parse, serialize } from '../core/codec';
 import type { StoredState, Task } from '../core/task';
 import { BACKUP_PREFIX, MAIN_KEY, WARNINGS, createBrowserStorage, type KeyValueStore } from '../io/storage';
 import { createApp, type App } from './app';
+import { IMPORT_CONFLICT } from './transfer';
 
 const NOW = '2026-10-19T12:00:00.000Z';
 
@@ -54,8 +55,12 @@ type Tab = {
   ls: Store;
   log: string[];
   downloads: { text: string; filename: string }[];
+  /** Makes the next downloads throw, as a browser that blocks them would. */
+  failDownload: boolean;
   $<T extends Element = HTMLElement>(selector: string): T | null;
   toast(): string | null;
+  /** Delivers another tab's `storage` event for the main key. */
+  externalChange(): void;
 };
 
 let tabs: Tab[] = [];
@@ -67,10 +72,11 @@ function openTab(initial: Record<string, string> = {}, ls?: Store): Tab {
   const root = document.createElement('div');
   document.body.append(root);
   const downloads: Tab['downloads'] = [];
+  const events = new EventTarget();
   const storage = createBrowserStorage({
     storage: () => store,
     now: () => clock.getTime(),
-    events: new EventTarget(),
+    events,
     navigator: {},
   });
   let n = 0;
@@ -80,6 +86,7 @@ function openTab(initial: Record<string, string> = {}, ls?: Store): Tab {
     now: () => clock.toISOString(),
     newId: () => `id-${++n}`,
     download: (text, filename) => {
+      if (tab.failDownload) throw new Error('download blocked');
       log.push(`download ${filename}`);
       downloads.push({ text, filename });
     },
@@ -90,8 +97,10 @@ function openTab(initial: Record<string, string> = {}, ls?: Store): Tab {
     ls: store,
     log,
     downloads,
+    failDownload: false,
     $: (s) => root.querySelector(s),
     toast: () => root.querySelector('.toast-slot')!.textContent,
+    externalChange: () => events.dispatchEvent(Object.assign(new Event('storage'), { key: MAIN_KEY })),
   };
   tabs.push(tab);
   return tab;
@@ -183,6 +192,17 @@ describe('export', () => {
     expect(tab.toast()).toContain("Downloaded 2 tasks, but the backup time couldn't be saved");
     const stored = parse(tab.ls.data.get(MAIN_KEY)!);
     expect(stored.ok && stored.value.lastExportAt).toBeUndefined();
+  });
+
+  it('when the download itself fails, no backup time is recorded and the toast says so', () => {
+    const tab = seeded();
+    tab.failDownload = true;
+    const before = new Map(tab.ls.data);
+    tab.app.exportTasks();
+    expect(tab.app.getState().lastExportAt).toBeUndefined();
+    expect(tab.ls.data).toEqual(before);
+    expect(tab.$('.backup-status')!.textContent).toBe('Never backed up');
+    expect(tab.toast()).toContain("Export failed: the file couldn't be downloaded.");
   });
 });
 
@@ -388,6 +408,50 @@ describe('import (AC6)', () => {
     expect(tab.toast()).toContain("Imported 3 tasks, but they aren't saved");
     expect([...tab.root.querySelectorAll('.banner')].map((b) => b.textContent)).toEqual([WARNINGS.full]);
   });
+
+  it('a failed bonus download does not stop the import: the backup key already holds the board', async () => {
+    const tab = seeded();
+    await tab.app.importFile(theirFile());
+    tab.failDownload = true;
+    replaceButton(tab).click();
+    expect(tab.ls.data.get(`${BACKUP_PREFIX}pre-import:${clock.toISOString()}`)).toBe(serialize(mine()));
+    expect(tab.app.getState().tasks).toStrictEqual(THEIRS);
+    expect(tab.toast()).toContain('Imported 3 tasks');
+  });
+
+  it('another tab saves while the panel is open: the count is brought up to date and the change is flagged', async () => {
+    const tab = seeded();
+    await tab.app.importFile(theirFile());
+    const theirs = mine({ rev: 4, tasks: [...MINE, task('m3', 'Book dentist', true, true, { order: 1 })] });
+    tab.ls.data.set(MAIN_KEY, serialize(theirs));
+    tab.externalChange();
+
+    // The panel no longer offers to replace "your 2 tasks" when the board now holds 3.
+    expect(tab.$('.import-confirm__text')!.textContent).toContain('Replace your 3 tasks with 3 tasks');
+    expect(errorText(tab)).toBe(IMPORT_CONFLICT);
+    expect(document.activeElement).toBe(cancelButton(tab));
+
+    // Replacing now backs up the board the panel describes.
+    replaceButton(tab).click();
+    expect(tab.ls.data.get(`${BACKUP_PREFIX}pre-import:${clock.toISOString()}`)).toBe(serialize(theirs));
+    expect(tab.app.getState().tasks).toStrictEqual(THEIRS);
+  });
+
+  it('a file still being read when a newer one is chosen is dropped, not shown after it', async () => {
+    const tab = seeded();
+    let finishSlow!: (text: string) => void;
+    const slow = fileOf('', 'slow.json');
+    vi.spyOn(slow, 'text').mockReturnValue(new Promise((resolve) => (finishSlow = resolve)));
+    const slowImport = tab.app.importFile(slow);
+    await tab.app.importFile(theirFile());
+    replaceButton(tab).click();
+    expect(tab.app.getState().tasks).toStrictEqual(THEIRS);
+
+    finishSlow(serialize({ version: 1, rev: 0, tasks: [THEIRS[0]!] }));
+    await slowImport;
+    expect(panel(tab)).toBeNull();
+    expect(document.activeElement).toBe(tab.$('.transfer__import'));
+  });
 });
 
 describe('the confirmation panel is modal', () => {
@@ -412,6 +476,15 @@ describe('the confirmation panel is modal', () => {
     cancelButton(tab).click();
     expect(document.activeElement).toBe(tab.$('.transfer__import'));
     expect(tab.root.querySelectorAll('[inert]')).toHaveLength(0);
+  });
+
+  it('leaves alone anything that was already inert before it opened', async () => {
+    const tab = seeded();
+    tab.$('.header')!.setAttribute('inert', '');
+    await tab.app.importFile(theirFile());
+    cancelButton(tab).click();
+    expect(tab.$('.header')!.hasAttribute('inert')).toBe(true);
+    expect(tab.root.querySelectorAll('[inert]')).toHaveLength(1);
   });
 
   it('with only Cancel showing (a rejected file), Tab stays on it', async () => {
