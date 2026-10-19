@@ -87,8 +87,8 @@ export function createApp({
   let saveWarning: string | undefined;
   /** Changes a reload discarded; shown until the next successful save. */
   let lostWarning: string | undefined;
-  /** Unsaved field text whose task a reload found deleted; shown until the next successful save. */
-  let deletedWarning: string | undefined;
+  /** Unsaved field text whose task a reload found deleted, one per task; shown until the next successful save. */
+  let deletedWarnings: string[] = [];
   /** Commits since the last successful save, which a reload would discard. */
   let unsaved = 0;
   /** Counts reloads, so a caller can tell its commit ended in one. */
@@ -121,7 +121,7 @@ export function createApp({
     const list: Notice[] = [];
     const candidates: (Notice | undefined)[] = [
       lostWarning === undefined ? undefined : { text: lostWarning },
-      deletedWarning === undefined ? undefined : { text: deletedWarning },
+      ...deletedWarnings.map((text) => ({ text })),
       saveWarning === undefined ? undefined : { text: saveWarning },
       rawNotice,
       loadWarning === undefined ? undefined : { text: loadWarning },
@@ -159,8 +159,9 @@ export function createApp({
     const lost = unsaved;
     const typed = unsavedFieldText();
     state = res.state;
-    const orphan = typed.find(({ task }) => !taskOf(task.id));
-    if (orphan) deletedWarning = deletedWhileEditingWarning(orphan.task.title, orphan.text);
+    for (const { task, text } of typed) {
+      if (!taskOf(task.id)) deletedWarnings.push(deletedWhileEditingWarning(task.title, text));
+    }
     loadWarning = res.warning;
     if (res.raw !== undefined && res.warning !== undefined) rawNotice = { text: res.warning, raw: res.raw };
     else if (rawNotice) rawNotice = { text: EARLIER_UNREADABLE, raw: rawNotice.raw };
@@ -186,7 +187,7 @@ export function createApp({
       unsaved = 0;
       saveWarning = undefined;
       lostWarning = undefined;
-      deletedWarning = undefined;
+      deletedWarnings = [];
       updateBanner();
       return 'saved';
     }

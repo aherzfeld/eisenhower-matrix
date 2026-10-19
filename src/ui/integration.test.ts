@@ -264,6 +264,17 @@ describe('another tab (AC12)', () => {
     expect(b.row('w')!.querySelector('.task__field-error')!.textContent).toBe('');
   });
 
+  it('keeps focus on the same control when another tab moves its row to another quadrant (#12)', () => {
+    const ls = new SharedStore();
+    writeElsewhere(ls, () => [task('m', 'Movable', true, true), task('k', 'Keep', true, true, { order: 1 })]);
+    const b = openTab(ls);
+    b.row('m')!.querySelector<HTMLElement>('.task__delete')!.focus();
+    writeElsewhere(ls, (tasks) => tasks.map((t) => (t.id === 'm' ? { ...t, urgent: false } : t)));
+    b.notify();
+    expect(b.titles('schedule')).toEqual(['Movable']);
+    expect(document.activeElement).toBe(b.row('m')!.querySelector('.task__delete'));
+  });
+
   it('a rename refused as stale stays open with the draft, so Enter saves it on the fresh data', () => {
     const ls = new SharedStore();
     writeElsewhere(ls, () => [task('x', 'Old', true, true)]);
@@ -354,6 +365,36 @@ describe('a field whose task another tab deleted (#15)', () => {
     expect(a.row('w')).toBeNull();
     expect(a.banners()).toContain(DELETED);
     expect(storedTasks(ls).map((t) => t.id)).not.toContain('w');
+  });
+
+  it('quotes the unsaved text as text, never as markup', () => {
+    const { a, b, who } = setUp();
+    const typed = `<img src=x onerror="alert(1)"> 'Sam' "Lee"`;
+    who.value = typed;
+    expect(b.app.deleteTask('w')).toBe(true);
+    a.notify();
+    const slot = a.root.querySelector('.banner-slot')!;
+    expect(slot.querySelector('img')).toBeNull();
+    expect(a.banners()).toEqual([`'Call Sam' was deleted in another tab. Your unsaved text was: "${typed}"`]);
+  });
+
+  it('keeps the text of each deleted task until a save, not only the latest', () => {
+    const { ls, a, b, who } = setUp();
+    writeElsewhere(ls, (tasks) => [...tasks, task('v', 'Call Vic', true, false, { order: 1 })]);
+    a.notify();
+    b.notify();
+    who.value = 'Sam Lee';
+    expect(b.app.deleteTask('w')).toBe(true);
+    a.notify();
+    const vic = a.row('v')!.querySelector<HTMLInputElement>('.task__who')!;
+    vic.focus();
+    vic.value = 'Vic Ray';
+    expect(b.app.deleteTask('v')).toBe(true);
+    a.notify();
+    expect(a.banners()).toEqual([
+      DELETED,
+      `'Call Vic' was deleted in another tab. Your unsaved text was: "Vic Ray"`,
+    ]);
   });
 
   it('shows no banner when the field held nothing unsaved', () => {
