@@ -7,7 +7,7 @@ import { clearDone, dropQuadrant, removeOne, restore, type Removal, type Removal
 import { validateTitle, type Result } from '../core/validate';
 import { downloadText, safeFilename } from '../io/download';
 import { backupReminder, renderBackupStatus } from './backup';
-import { lostChangesWarning, renderBanner, type Notice } from './banner';
+import { EARLIER_UNREADABLE, lostChangesWarning, renderBanner, type Notice } from './banner';
 import { START, paintSquares, renderPrompt, squareClasses, triageKey, type Triage } from './capture';
 import { isComposing, resolveKey, type KeyAction } from './keys';
 import { reorderVisible } from './order';
@@ -128,6 +128,7 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     state = res.state;
     loadWarning = res.warning;
     if (res.raw !== undefined && res.warning !== undefined) rawNotice = { text: res.warning, raw: res.raw };
+    else if (rawNotice) rawNotice = { text: EARLIER_UNREADABLE, raw: rawNotice.raw };
     saveWarning = undefined;
     unsaved = 0;
     if (lost > 0) lostWarning = lostChangesWarning(lost);

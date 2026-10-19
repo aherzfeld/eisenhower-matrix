@@ -8,6 +8,13 @@ export type Notice = { text: string; raw?: string };
 
 export const DOWNLOAD_RAW_LABEL = 'Download the unreadable data';
 
+/**
+ * Keeps the download on offer once a reload finds the stored data readable again (another tab
+ * backed it up and saved), when the first load's words ("Not saving", "started empty") no
+ * longer hold.
+ */
+export const EARLIER_UNREADABLE = "Tasks saved earlier couldn't be read. Download them to keep a copy.";
+
 /** Banner text after a reload discarded changes this tab could not save. */
 export function lostChangesWarning(count: number): string {
   return count === 1

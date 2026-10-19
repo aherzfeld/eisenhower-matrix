@@ -8,6 +8,7 @@ import { serialize } from '../core/codec';
 import { createTask, setFlags, setWho, toggleDone, type StoredState, type Task } from '../core/task';
 import { MAIN_KEY, WARNINGS, createBrowserStorage, type KeyValueStore } from '../io/storage';
 import { createApp, type App } from './app';
+import { EARLIER_UNREADABLE } from './banner';
 
 const NOW = '2026-10-19T12:00:00.000Z';
 const ok = (value: Task[]) => ({ ok: true as const, value });
@@ -318,7 +319,26 @@ describe('banners (AC4, AC5)', () => {
     add(b, 'From B');
     a.notify();
     expect(a.titles('do')).toEqual(['From B']);
+    expect(a.banners()).toEqual([EARLIER_UNREADABLE]); // no longer "started empty"
     expect(downloadButton(a)).not.toBeNull();
+  });
+
+  it('once another tab has made the data readable, stops saying "Not saving" but keeps the download', async () => {
+    const ls = new SharedStore({ [MAIN_KEY]: GARBAGE });
+    ls.failSet = (key) => key !== MAIN_KEY && quota();
+    const a = openTab(ls);
+    expect(a.banners()).toEqual([WARNINGS.corruptNotBackedUp]);
+    ls.failSet = null;
+    const b = openTab(ls); // backs the data up this time, and starts empty
+    add(b, 'From B');
+    a.notify();
+    expect(a.banners()).toEqual([EARLIER_UNREADABLE]);
+    add(a, 'From A');
+    expect(storedTasks(ls).map((t) => t.title)).toEqual(['From B', 'From A']);
+    expect(a.banners()).toEqual([EARLIER_UNREADABLE]);
+    const got = captureDownload();
+    downloadButton(a)!.click();
+    expect(await got.text).toBe(GARBAGE);
   });
 
   it('corrupt data that could not be backed up: memory mode, main key untouched, download offered', () => {
