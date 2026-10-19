@@ -1,14 +1,16 @@
 /** The app controller: holds state, applies core ops, saves, re-renders, routes events. */
 import { QUADRANTS, flagsFor, quadrantOf, type Quadrant } from '../core/quadrant';
 import type { StoragePort } from '../core/ports';
-import { createTask, rename, setFlags, toggleDone, type StoredState, type Task } from '../core/task';
+import { localToday, msUntilMidnight } from '../core/dates';
+import { createTask, rename, setFlags, setWhen, setWho, toggleDone, type StoredState, type Task } from '../core/task';
 import { clearDone, dropQuadrant, removeOne, restore, type Removal, type RemovalRecord } from '../core/undo';
 import { validateTitle, type Result } from '../core/validate';
 import { renderBanner } from './banner';
 import { START, paintSquares, renderPrompt, squareClasses, triageKey, type Triage } from './capture';
 import { isComposing, resolveKey, type KeyAction } from './keys';
 import { reorderVisible } from './order';
-import { buildShell, renderBoard, sortedFor, type Editing, type Shell } from './render';
+import { buildShell, refreshStamps, renderBoard, sortedFor, type Editing, type Shell } from './render';
+import { reviewKey, reviewProgress, startReview, type Review } from './review';
 import { browserTimers, createToaster, type Timers } from './toast';
 
 export type AppOptions = {
@@ -26,9 +28,10 @@ export type App = {
   /**
    * Applies a core op to the tasks, saves, and re-renders. On failure nothing changes.
    * `focusId` moves focus to that task after the render (focus follows the task).
+   * `render: false` saves without re-rendering, for edits to a field the user is still in.
    * T7-T10 add their features by calling this.
    */
-  commit(op: (tasks: Task[]) => Result<Task[]>, opts?: { focusId?: string }): Result<Task[]>;
+  commit(op: (tasks: Task[]) => Result<Task[]>, opts?: { focusId?: string; render?: boolean }): Result<Task[]>;
   render(focusId?: string): void;
   /**
    * Removals save at once and show an undo toast. Each returns false when nothing was
@@ -56,6 +59,11 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
   let saveWarning: string | undefined;
 
   let triage: Triage | undefined;
+  let review: Review | undefined;
+  let reviewReturnId: string | undefined;
+  let renderedToday = '';
+  let dueStale = false;
+  let midnightTimer: unknown;
   let pendingTitle = '';
   let editing: Editing | undefined;
   const tabStops: Partial<Record<Quadrant, string>> = {};
@@ -65,6 +73,8 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
   const findRow = (id: string) =>
     [...root.querySelectorAll<HTMLElement>('.task')].find((r) => r.dataset.taskId === id);
   const taskOf = (id: string) => state.tasks.find((t) => t.id === id);
+  /** The local calendar day, from the injected clock. */
+  const today = () => localToday(new Date(now()));
 
   function updateBanner() {
     renderBanner(shell.banner, saveWarning ?? loadWarning);
@@ -96,17 +106,19 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
       const t = taskOf(focusId);
       if (t) tabStops[quadrantOf(t)] = focusId;
     }
-    renderBoard(shell, state.tasks, { tabStops, editing });
+    renderedToday = today();
+    dueStale = false;
+    renderBoard(shell, state.tasks, { tabStops, editing, today: renderedToday });
     if (id) focusRow(id);
   }
 
-  function commit(op: (tasks: Task[]) => Result<Task[]>, opts: { focusId?: string } = {}) {
+  function commit(op: (tasks: Task[]) => Result<Task[]>, opts: { focusId?: string; render?: boolean } = {}) {
     const result = op(state.tasks);
     if (!result.ok) return result;
     if (result.value === state.tasks) return result; // the op changed nothing: no save, no render
     state = { ...state, tasks: result.value };
     persist();
-    render(opts.focusId);
+    if (opts.render !== false) render(opts.focusId);
     return result;
   }
 
@@ -150,9 +162,104 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     const { flags } = outcome;
     paintSquares(shell.prompt, squareClasses(flags));
     const result = commit((tasks) => createTask(tasks, { title: pendingTitle, ...flags }, { id: newId(), now: now() }));
-    if (result.ok) shell.input.value = '';
-    else shell.message.textContent = result.error;
+    if (result.ok) {
+      shell.input.value = '';
+      const label = QUADRANTS.find((info) => info.id === quadrantOf(flags))!.label;
+      toaster.announce(`Added to ${label}`);
+    } else shell.message.textContent = result.error;
     endTriage();
+  }
+
+  // ---- review ----
+
+  function showReview() {
+    if (!review) return;
+    const current = taskOf(review.queue[review.index]!);
+    renderPrompt(shell.prompt, review.triage, {
+      title: current?.title ?? '',
+      progress: reviewProgress(review),
+    });
+  }
+
+  function startReviewMode() {
+    if (triage || review) return;
+    const started = startReview(state.tasks);
+    if (!started) return toaster.announce('Nothing to review');
+    review = started;
+    reviewReturnId = rowOf(doc.activeElement)?.dataset.taskId;
+    showReview();
+    shell.prompt.region.focus();
+  }
+
+  function endReview(message?: string) {
+    review = undefined;
+    renderPrompt(shell.prompt, undefined);
+    if (reviewReturnId && findRow(reviewReturnId)) focusRow(reviewReturnId);
+    else focusCapture();
+    reviewReturnId = undefined;
+    if (message) toaster.announce(message);
+  }
+
+  function handleReviewKey(event: KeyboardEvent) {
+    if (!review) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    event.preventDefault();
+    const outcome = reviewKey(review, event.key);
+    if (outcome.kind === 'ignore') return;
+    if (outcome.kind === 'cancel') return endReview();
+    if (outcome.kind === 'continue') {
+      review = outcome.review;
+      return showReview();
+    }
+    const current = taskOf(outcome.id);
+    if (current && quadrantOf(current) !== quadrantOf(outcome.flags)) {
+      commit((tasks) => setFlags(tasks, outcome.id, outcome.flags, now()));
+    }
+    review = outcome.review;
+    if (review) showReview();
+    else endReview('Review complete');
+  }
+
+  // ---- due dates ----
+
+  function inTaskField(): boolean {
+    const a = doc.activeElement;
+    return a instanceof HTMLInputElement && root.contains(a) && a.matches('.task__when, .task__who, .task__edit');
+  }
+
+  /** Re-renders when the local day has changed, unless the user is in a field (then on focusout). */
+  function recheckDue() {
+    if (today() === renderedToday) return;
+    if (inTaskField()) {
+      dueStale = true;
+      return;
+    }
+    render();
+  }
+
+  function armMidnight() {
+    if (midnightTimer !== undefined) timers.clearTimeout(midnightTimer);
+    midnightTimer = timers.setTimeout(() => {
+      recheckDue();
+      armMidnight();
+    }, msUntilMidnight(new Date(now())));
+  }
+
+  /** Saves a row's date or who. The field stays in place; only its stamps are refreshed. */
+  function saveField(field: HTMLInputElement) {
+    const rowEl = rowOf(field);
+    const id = rowEl?.dataset.taskId;
+    const current = id ? taskOf(id) : undefined;
+    if (!rowEl || !id || !current) return;
+    const isWhen = field.classList.contains('task__when');
+    const result = commit(
+      (tasks) => (isWhen ? setWhen(tasks, id, field.value || undefined, now()) : setWho(tasks, id, field.value, now())),
+      { render: false },
+    );
+    const saved = taskOf(id) ?? current;
+    if (!result.ok) shell.message.textContent = result.error;
+    field.value = (isWhen ? saved.when : saved.who) ?? '';
+    refreshStamps(rowEl, saved, today());
   }
 
   // ---- board actions ----
@@ -266,6 +373,15 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
       event.preventDefault();
       return focusCapture();
     }
+    if (action.type === 'review') {
+      event.preventDefault();
+      return startReviewMode();
+    }
+    if (action.type === 'undo') {
+      // Only claim the key while an undo is on offer; otherwise leave it to the browser.
+      if (toaster.undo()) event.preventDefault();
+      return;
+    }
     const row = rowOf(event.target);
     const id = row?.dataset.taskId;
     if (!row || !id) return;
@@ -296,6 +412,7 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
 
   function onDocKeydown(event: KeyboardEvent) {
     if (triage) return handleTriageKey(event);
+    if (review) return handleReviewKey(event);
     if (event.defaultPrevented) return;
     const action = resolveKey(event);
     if (action) handleAction(action, event);
@@ -307,7 +424,7 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
   const toaster = createToaster(shell.toast, timers, opts);
 
   shell.input.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' || isComposing(event) || triage) return;
+    if (event.key !== 'Enter' || isComposing(event) || triage || review) return;
     event.preventDefault();
     startTriage();
   });
@@ -333,12 +450,14 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
   }, opts);
   root.addEventListener('change', (event) => {
     const t = event.target;
-    if (!(t instanceof HTMLInputElement) || !t.classList.contains('task__check')) return;
+    if (!(t instanceof HTMLInputElement)) return;
+    if (t.classList.contains('task__when') || t.classList.contains('task__who')) return saveField(t);
+    if (!t.classList.contains('task__check')) return;
     const id = rowOf(t)?.dataset.taskId;
     if (id) commit((tasks) => toggleDone(tasks, id, now()), { focusId: id });
   }, opts);
   root.addEventListener('click', (event) => {
-    const t = event.target instanceof Element ? event.target.closest<HTMLElement>('.task__move, .task__rename, .task__delete') : null;
+    const t = event.target instanceof Element ? event.target.closest<HTMLElement>('.task__move, .task__promote, .task__rename, .task__delete') : null;
     const id = rowOf(t)?.dataset.taskId;
     if (!t || !id) return;
     if (t.classList.contains('task__rename')) startRename(id);
@@ -355,11 +474,22 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     tabStops[quadrantOf(task)] = id;
     for (const r of row.parentElement?.children ?? []) (r as HTMLElement).tabIndex = r === row ? 0 : -1;
   }, opts);
+  root.addEventListener('focusout', (event) => {
+    const next = event.relatedTarget;
+    const stillInField = next instanceof Element && next.matches('.task__when, .task__who, .task__edit');
+    if (dueStale && !stillInField) render(); // activeElement may not have moved yet, so not recheckDue()
+  }, opts);
   doc.addEventListener('keydown', onDocKeydown, opts);
+  doc.addEventListener('visibilitychange', () => {
+    if (doc.visibilityState !== 'visible') return;
+    recheckDue();
+    armMidnight(); // a sleeping machine can leave the timer late
+  }, opts);
 
   renderPrompt(shell.prompt, undefined);
   updateBanner();
   render();
+  armMidnight();
 
   return {
     getState: () => state,
@@ -374,6 +504,7 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     destroy: () => {
       listening.abort();
       toaster.clear();
+      if (midnightTimer !== undefined) timers.clearTimeout(midnightTimer);
     },
   };
 }

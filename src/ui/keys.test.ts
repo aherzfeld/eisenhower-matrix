@@ -34,8 +34,22 @@ describe('resolveKey', () => {
     expect(resolveKey(press({ key: 'Backspace' }))).toEqual({ type: 'remove' });
   });
 
-  it('leaves unbound keys alone (r belongs to a later task)', () => {
-    for (const key of ['r', 'x', '5', '0']) {
+  it('maps r to review, and Ctrl/Cmd+Z to undo', () => {
+    expect(resolveKey(press({ key: 'r' }))).toEqual({ type: 'review' });
+    expect(resolveKey(press({ key: 'z', ctrlKey: true }))).toEqual({ type: 'undo' });
+    expect(resolveKey(press({ key: 'z', metaKey: true }))).toEqual({ type: 'undo' });
+    expect(resolveKey(press({ key: 'Z', metaKey: true }))).toEqual({ type: 'undo' });
+  });
+
+  it('does not treat Shift+Cmd+Z (redo), Alt chords or a bare z as undo', () => {
+    expect(resolveKey(press({ key: 'z', metaKey: true, shiftKey: true }))).toBeUndefined();
+    expect(resolveKey(press({ key: 'z', ctrlKey: true, altKey: true }))).toBeUndefined();
+    expect(resolveKey(press({ key: 'z' }))).toBeUndefined();
+    expect(resolveKey(press({ key: 'r', ctrlKey: true }))).toBeUndefined();
+  });
+
+  it('leaves unbound keys alone', () => {
+    for (const key of ['x', '5', '0']) {
       expect(resolveKey(press({ key }))).toBeUndefined();
     }
   });
@@ -57,14 +71,18 @@ describe('resolveKey', () => {
     editable.setAttribute('contenteditable', 'true');
     targets.push(editable);
     for (const t of targets) {
-      for (const key of ['/', '1', 'ArrowUp', ' ', 'Enter', 'Delete', 'Backspace']) {
+      for (const key of ['/', '1', 'ArrowUp', ' ', 'Enter', 'Delete', 'Backspace', 'r']) {
         expect(resolveKey(press({ key }, t))).toBeUndefined();
       }
+      // The browser's own undo must keep working in a text field.
+      expect(resolveKey(press({ key: 'z', metaKey: true }, t))).toBeUndefined();
+      expect(resolveKey(press({ key: 'z', ctrlKey: true }, t))).toBeUndefined();
     }
   });
 
   it('ignores keys during IME composition', () => {
     expect(resolveKey(press({ key: '1', isComposing: true }))).toBeUndefined();
+    expect(resolveKey(press({ key: 'r', isComposing: true }))).toBeUndefined();
     expect(resolveKey(press({ key: 'Backspace', isComposing: true }))).toBeUndefined();
   });
 

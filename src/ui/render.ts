@@ -1,5 +1,6 @@
 /** State to DOM. Emits the structure and class names in docs/design.md; no styling here. */
 import { QUADRANTS, quadrantOf, type Quadrant } from '../core/quadrant';
+import { isDue } from '../core/dates';
 import type { Task } from '../core/task';
 import type { PromptEls } from './capture';
 
@@ -27,6 +28,8 @@ export type BoardView = {
   /** The id of each quadrant's single Tab stop. Falls back to the first task. */
   tabStops: Partial<Record<Quadrant, string>>;
   editing?: Editing;
+  /** Local 'YYYY-MM-DD'. Due status is derived from it on every render. */
+  today: string;
 };
 
 const VERBS: Record<Quadrant, string> = {
@@ -102,6 +105,10 @@ export function buildShell(root: HTMLElement): Shell {
   const question = el('p', 'prompt__question');
   const keys = el('p', 'prompt__keys');
   keys.append(chip('Y'), chip('N'));
+  const detail = el('p', 'prompt__detail');
+  const title = el('span', 'prompt__task');
+  const progress = el('span', 'prompt__progress');
+  detail.append(title, progress);
   const mini = el('div', 'mini');
   mini.hidden = true;
   mini.setAttribute('aria-hidden', 'true');
@@ -110,7 +117,7 @@ export function buildShell(root: HTMLElement): Shell {
     squares[q.id] = el('span', `mini__sq mini__sq--${q.id}`);
     mini.append(squares[q.id]);
   }
-  region.append(question, keys, mini);
+  region.append(detail, question, keys, mini);
 
   const board = el('div', 'board');
   const axis = (cls: string, text: string) => {
@@ -158,7 +165,7 @@ export function buildShell(root: HTMLElement): Shell {
     input,
     capture,
     message,
-    prompt: { region, question, mini, squares },
+    prompt: { region, question, title, progress, mini, squares },
     banner,
     toast,
     footer,
@@ -171,7 +178,42 @@ export function buildShell(root: HTMLElement): Shell {
   };
 }
 
-function renderTask(task: Task, tabStop: boolean, editing: Editing | undefined): HTMLLIElement {
+/**
+ * The stamps (and Due's "Move to Do" button) for one row. Rebuilt in place by refreshStamps
+ * when a date or who changes, so a field being edited is never torn down under the user.
+ */
+function buildStamps(task: Task, today: string, isNext: boolean): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  if (isNext && !task.done) out.push(el('span', 'stamp stamp--next', 'Next'));
+  if (isDue(task, today)) {
+    out.push(el('span', 'stamp stamp--due', 'Due'));
+    const promote = el('button', 'task__promote', 'Move to Do');
+    promote.type = 'button';
+    promote.tabIndex = -1;
+    promote.dataset.move = 'do';
+    promote.setAttribute('aria-label', `Move to Do: ${task.title}`);
+    out.push(promote);
+  }
+  if (quadrantOf(task) === 'delegate' && task.who) {
+    out.push(el('span', 'stamp stamp--waiting', `Waiting on ${task.who}`));
+  }
+  return out;
+}
+
+export function refreshStamps(li: HTMLElement, task: Task, today: string): void {
+  const slot = li.querySelector('.task__stamps');
+  if (!slot) return;
+  const isNext = slot.querySelector('.stamp--next') !== null;
+  slot.replaceChildren(...buildStamps(task, today, isNext));
+}
+
+function renderTask(
+  task: Task,
+  tabStop: boolean,
+  editing: Editing | undefined,
+  today: string,
+  isNext: boolean,
+): HTMLLIElement {
   const li = el('li', 'task');
   li.dataset.taskId = task.id;
   li.dataset.done = String(task.done);
@@ -195,6 +237,27 @@ function renderTask(task: Task, tabStop: boolean, editing: Editing | undefined):
     li.append(error);
   } else {
     li.append(el('span', 'task__title', task.title));
+  }
+
+  const stamps = el('span', 'task__stamps');
+  stamps.append(...buildStamps(task, today, isNext));
+  li.append(stamps);
+
+  const quadrant = quadrantOf(task);
+  if (quadrant === 'schedule') {
+    const when = el('input', 'task__when');
+    when.type = 'date';
+    when.value = task.when ?? '';
+    when.setAttribute('aria-label', `Date for ${task.title}`);
+    li.append(when);
+  } else if (quadrant === 'delegate') {
+    const who = el('input', 'task__who');
+    who.type = 'text';
+    who.placeholder = 'Who?';
+    who.value = task.who ?? '';
+    who.autocomplete = 'off';
+    who.setAttribute('aria-label', `Who is handling ${task.title}`);
+    li.append(who);
   }
 
   if (!editing) {
@@ -234,7 +297,13 @@ export function renderBoard(shell: Shell, tasks: readonly Task[], view: BoardVie
     const stopId = sorted.some((t) => t.id === view.tabStops[q.id]) ? view.tabStops[q.id] : sorted[0]?.id;
     shell.lists[q.id].replaceChildren(
       ...sorted.map((t) =>
-        renderTask(t, t.id === stopId, view.editing?.id === t.id ? view.editing : undefined),
+        renderTask(
+          t,
+          t.id === stopId,
+          view.editing?.id === t.id ? view.editing : undefined,
+          view.today,
+          q.id === 'do' && t.id === sorted[0]?.id,
+        ),
       ),
     );
     shell.counts[q.id].textContent = String(sorted.filter((t) => !t.done).length);
