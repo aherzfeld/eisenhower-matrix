@@ -303,6 +303,9 @@ function parsePreImportKey(key: string): { ms: number; n: number } | null {
  * older than anything written since; it orders below every present-day key and is pruned
  * first (#18). A key stamped exactly at `now` is present-day. Among future-dated keys the
  * order is the same as among present-day ones (later timestamp, then higher N, is newer).
+ * `now` only changes which keys are selected, never how many: a clock running behind can
+ * select genuinely newer backups first, and a clock that is not a number (NaN) makes no key
+ * future-dated, so the order is by timestamp alone.
  */
 export function preImportBackupsToPrune(
   keys: readonly string[],

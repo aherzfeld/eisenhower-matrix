@@ -726,6 +726,24 @@ describe('preImportBackupsToPrune (#11)', () => {
         );
       }
     });
+
+    it('the clock decides which keys go, never how many; a clock that is not a number orders by timestamp alone', () => {
+      const justWritten = at(3, '-1');
+      const keys = [at(4), at(1), at(5), justWritten, at(3), at(2), at(7), at(6, '-2'), `${PRE}garbage`];
+      const byTimestamp = [at(7), at(6, '-2'), at(5), at(4), at(3), at(2), at(1)];
+      const stamps = [1, 2, 3, 4, 5, 6, 7].map(ms);
+      const clocks = [NaN, Infinity, -Infinity, 0, ...stamps, ...stamps.map((t) => t - 1), ...stamps.map((t) => t + 1)];
+      for (const now of clocks) {
+        for (let keep = 0; keep <= byTimestamp.length + 2; keep++) {
+          const pruned = preImportBackupsToPrune(keys, justWritten, keep, now);
+          const label = `now ${now}, keep ${keep}`;
+          expect(pruned.length, label).toBe(Math.max(byTimestamp.length - Math.max(keep - 1, 0), 0));
+          expect(pruned, label).not.toContain(justWritten);
+          expect(byTimestamp, label).toEqual(expect.arrayContaining(pruned));
+          if (!Number.isFinite(now)) expect(pruned, label).toEqual(byTimestamp.slice(Math.max(keep - 1, 0)));
+        }
+      }
+    });
   });
 });
 
@@ -804,6 +822,25 @@ describe('pre-import backup retention in writeBackup (#11)', () => {
     expect(ls.data.get(`${PRE}2026-10-19T12:00:00.001Z`)).toBe('B');
     expect(ls.removes).toEqual([f(1), f(2)]);
     untouched();
+  });
+
+  it('a clock that is not a number writes no backup and removes nothing (#18)', () => {
+    const initial = { [MAIN_KEY]: MAIN, ...OTHERS, [key(-3)]: 'a', [key(-2)]: 'b', [key(-1)]: 'c', [key(60)]: 'f' };
+    const { ls, port } = setup(initial, { now: () => NaN });
+    port.load();
+    expect(port.writeBackup('pre-import', 'x')).toBe('failed');
+    expect(ls.removes).toEqual([]);
+    expect(Object.fromEntries(ls.data)).toEqual(initial);
+  });
+
+  it('a clock that turns invalid after stamping prunes by timestamp alone (#18)', () => {
+    let calls = 0;
+    const initial = { [MAIN_KEY]: MAIN, ...OTHERS, [key(-3)]: 'a', [key(-2)]: 'b', [key(-1)]: 'c', [key(60)]: 'f' };
+    const { ls, port } = setup(initial, { now: () => (calls++ === 0 ? NOW : NaN) });
+    port.load();
+    expect(port.writeBackup('pre-import', 'x')).toBe('ok');
+    expect(ls.removes.sort()).toEqual([key(-3), key(-2)]);
+    expect(ls.data.get(key(0))).toBe('x');
   });
 
   it('prunes only after a pre-import backup, not after any other label', () => {
