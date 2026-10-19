@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { serialize } from '../core/codec';
 import { createTask, setFlags, setWho, toggleDone, type StoredState, type Task } from '../core/task';
 import { MAIN_KEY, WARNINGS, createBrowserStorage, type KeyValueStore } from '../io/storage';
-import { createApp, type App } from './app';
+import { NOT_SAVED_CONFLICT, createApp, type App } from './app';
 import { EARLIER_UNREADABLE } from './banner';
 
 const NOW = '2026-10-19T12:00:00.000Z';
@@ -238,6 +238,41 @@ describe('another tab (AC12)', () => {
     expect(b.app.getState().tasks.map((t) => t.id)).toEqual(['w', 'o']);
     who.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
     expect(b.titles('delegate')).toEqual(['Delegate me', 'Other']);
+  });
+
+  it('a rename refused as stale stays open with the draft, so Enter saves it on the fresh data', () => {
+    const ls = new SharedStore();
+    writeElsewhere(ls, () => [task('x', 'Old', true, true)]);
+    const b = openTab(ls);
+    b.row('x')!.querySelector<HTMLButtonElement>('.task__rename')!.click();
+    const edit = b.root.querySelector<HTMLInputElement>('.task__edit')!;
+    edit.value = 'New name';
+    edit.dispatchEvent(new Event('input', { bubbles: true }));
+    writeElsewhere(ls, (tasks) => [...tasks, task('y', 'Other', true, true, { order: 1 })]); // event not yet here
+    edit.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    expect(storedTasks(ls).map((t) => t.title)).toEqual(['Old', 'Other']);
+    expect(b.banners()).toEqual(["Changed in another tab. 1 change made here wasn't saved."]);
+    const again = b.root.querySelector<HTMLInputElement>('.task__edit')!;
+    expect(again.value).toBe('New name');
+    expect(document.activeElement).toBe(again);
+    expect(b.root.querySelector('.task__error')!.textContent).toBe(NOT_SAVED_CONFLICT);
+    again.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    expect(storedTasks(ls).map((t) => t.title)).toEqual(['New name', 'Other']);
+    expect(b.root.querySelector('.task__edit')).toBeNull();
+    expect(b.banners()).toEqual([]);
+  });
+
+  it('mid-review, a task another tab deleted is skipped at once', () => {
+    const ls = new SharedStore();
+    writeElsewhere(ls, () => [task('x', 'Gone task', true, true), task('y', 'Next task', true, true, { order: 1 })]);
+    const b = openTab(ls);
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', bubbles: true, cancelable: true }));
+    const prompt = () => b.root.querySelector('.prompt')!.textContent;
+    expect(prompt()).toContain('Gone task');
+    writeElsewhere(ls, (tasks) => tasks.filter((t) => t.id !== 'x'));
+    b.notify();
+    expect(prompt()).toContain('Next task');
+    expect(prompt()).not.toContain('Gone task');
   });
 
   it('ends a rename whose task another tab deleted', () => {

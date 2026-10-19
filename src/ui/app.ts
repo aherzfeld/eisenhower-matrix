@@ -402,11 +402,16 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     editing = undefined;
     const before = reloads;
     const result = commit((tasks) => rename(tasks, current.id, current.draft, now()), { focusId: current.id });
-    if (!result.ok && reloads === before) {
+    if (result.ok) return;
+    if (reloads !== before) {
+      // Refused as stale: reopen on the fresh data with the draft, so Enter tries again.
+      if (!taskOf(current.id)) return;
       editing = { ...current, error: result.error };
-      const msg = findRow(current.id)?.querySelector('.task__error');
-      if (msg) msg.textContent = result.error;
+      return render(current.id);
     }
+    editing = { ...current, error: result.error };
+    const msg = findRow(current.id)?.querySelector('.task__error');
+    if (msg) msg.textContent = result.error;
   }
 
   // ---- removal and undo ----
