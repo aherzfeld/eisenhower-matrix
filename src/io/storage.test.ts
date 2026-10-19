@@ -504,3 +504,61 @@ describe('warnings', () => {
     expect(WARNINGS.conflict).toBe("Changed in another tab. Your last change wasn't saved.");
   });
 });
+
+describe('writeBackup (pre-import backup, T11)', () => {
+  const PRE_IMPORT_KEY = `eisenhower:backup:pre-import:${TS}`;
+
+  it('writes the text to a labelled, timestamped backup key and leaves the main key alone', () => {
+    const { ls, port } = setup({ [MAIN_KEY]: serialize(stateAt(1)) });
+    port.load();
+    expect(port.writeBackup('pre-import', 'current')).toBe(true);
+    expect(ls.writes).toEqual([PRE_IMPORT_KEY]);
+    expect(ls.data.get(PRE_IMPORT_KEY)).toBe('current');
+    expect(ls.data.get(MAIN_KEY)).toBe(serialize(stateAt(1)));
+  });
+
+  it('writes a fresh key every time, never overwriting an earlier backup', () => {
+    const { ls, port } = setup({ [PRE_IMPORT_KEY]: 'older' });
+    port.load();
+    expect(port.writeBackup('pre-import', 'current')).toBe(true);
+    expect(ls.data.get(PRE_IMPORT_KEY)).toBe('older');
+    expect(ls.data.get(`${PRE_IMPORT_KEY}-1`)).toBe('current');
+    expect(port.writeBackup('pre-import', 'current')).toBe(true);
+    expect(ls.data.get(`${PRE_IMPORT_KEY}-2`)).toBe('current');
+  });
+
+  it.each([
+    ['a quota error', quota],
+    ['a SecurityError', () => new DOMException('denied', 'SecurityError')],
+    ['an odd thrown value', () => 'boom'],
+  ])('any setItem throw counts as failure: %s', (_name, error) => {
+    const { ls, port } = setup();
+    port.load();
+    ls.failSet = () => error();
+    expect(port.writeBackup('pre-import', 'current')).toBe(false);
+    expect(ls.data.size).toBe(0);
+  });
+
+  it('fails when reading storage throws', () => {
+    const { ls, port } = setup();
+    port.load();
+    ls.failGet = () => new DOMException('denied', 'SecurityError');
+    expect(port.writeBackup('pre-import', 'current')).toBe(false);
+  });
+
+  it('fails when the write does not read back', () => {
+    const { ls, port } = setup();
+    port.load();
+    const setItem = ls.setItem.bind(ls);
+    ls.setItem = (key, value) => setItem(key, value.slice(1));
+    expect(port.writeBackup('pre-import', 'current')).toBe(false);
+  });
+
+  it('writes nothing in read-only mode (data from a newer version)', () => {
+    const newer = JSON.stringify({ version: 2, rev: 0, tasks: [] });
+    const { ls, port } = setup({ [MAIN_KEY]: newer });
+    expect(port.load().mode).toBe('readonly');
+    expect(port.writeBackup('pre-import', 'current')).toBe(false);
+    expect(ls.writes).toEqual([]);
+  });
+});

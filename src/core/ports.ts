@@ -36,6 +36,11 @@ export interface StoragePort {
   save(state: StoredState): SaveResult;
   /** Called when another tab changes the data. Returns an unsubscribe function. */
   subscribe(onExternalChange: () => void): () => void;
+  /**
+   * Keeps `text` under a new backup key named for `label` (import writes 'pre-import' before
+   * replacing the board). True only when the copy is known to be stored; any failure is false.
+   */
+  writeBackup(label: string, text: string): boolean;
 }
 
 export function emptyState(): StoredState {
@@ -45,6 +50,8 @@ export function emptyState(): StoredState {
 export type MemoryStorage = StoragePort & {
   /** Test/UI-work hook: replace the stored state and notify subscribers. */
   simulateExternalChange(state: StoredState): void;
+  /** Every backup written, in order. */
+  backups: { label: string; text: string }[];
 };
 
 export type MemoryStorageOptions = { initial?: StoredState; mode?: StorageMode; warning?: string };
@@ -56,7 +63,14 @@ export function createMemoryStorage({
 }: MemoryStorageOptions = {}): MemoryStorage {
   let stored: StoredState = structuredClone(initial);
   const listeners = new Set<() => void>();
+  const backups: { label: string; text: string }[] = [];
   return {
+    backups,
+    writeBackup(label, text) {
+      if (mode !== 'persistent') return false;
+      backups.push({ label, text });
+      return true;
+    },
     load: () => ({
       state: structuredClone(stored),
       mode,

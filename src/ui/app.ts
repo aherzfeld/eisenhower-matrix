@@ -14,6 +14,7 @@ import { reorderVisible } from './order';
 import { buildShell, refreshStamps, renderBoard, sortedFor, type Editing, type Shell } from './render';
 import { reviewKey, reviewProgress, settleReview, startReview, type Review } from './review';
 import { browserTimers, createToaster, type Timers } from './toast';
+import { createTransfer, type SaveOutcome } from './transfer';
 
 export type AppOptions = {
   root: HTMLElement;
@@ -23,6 +24,8 @@ export type AppOptions = {
   newId: () => string;
   /** For the undo toast's 5 s window. Defaults to the browser's timers. */
   timers?: Timers;
+  /** Saves a file (export). Defaults to a browser download. */
+  download?: (text: string, filename: string) => void;
 };
 
 export type App = {
@@ -49,6 +52,10 @@ export type App = {
   /** Undoes the removal on the live toast. False once it has expired or been replaced. */
   undo(): boolean;
   focusCapture(): void;
+  /** Downloads the board as JSON, then records the time as the last backup. */
+  exportTasks(): void;
+  /** Validates the file and asks before replacing the board (see transfer.ts). */
+  importFile(file: File): Promise<void>;
   shell: Shell;
   destroy(): void;
 };
@@ -58,7 +65,14 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 export const UPDATED_ELSEWHERE = 'Updated from another tab';
 export const NOT_SAVED_CONFLICT = "Changed in another tab, so this wasn't saved. Try again.";
 
-export function createApp({ root, storage, now, newId, timers = browserTimers }: AppOptions): App {
+export function createApp({
+  root,
+  storage,
+  now,
+  newId,
+  timers = browserTimers,
+  download = (text, filename) => downloadText(text, filename),
+}: AppOptions): App {
   const doc = root.ownerDocument;
   const shell = buildShell(root);
   let state: StoredState = { version: 1, rev: 0, tasks: [] }; // replaced by the first load, below
@@ -144,7 +158,7 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
   }
 
   /** Saves the current state. A conflict reloads from storage instead of writing. */
-  function persist(): 'saved' | 'failed' | 'reloaded' {
+  function persist(): SaveOutcome {
     const res = storage.save(state);
     if (res.ok) {
       state = { ...state, rev: res.rev };
@@ -170,6 +184,7 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     if (lost === 0) toaster.announce(UPDATED_ELSEWHERE);
     renderSoon();
     if (review) syncReview();
+    transfer.boardChanged();
   }
 
   function focusRow(id: string) {
@@ -534,6 +549,7 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
   // ---- listeners ----
 
   function onDocKeydown(event: KeyboardEvent) {
+    if (transfer.handleKey(event)) return; // the import panel is modal: no shortcuts while it is open
     if (triage) return handleTriageKey(event);
     if (review) return handleReviewKey(event);
     if (event.defaultPrevented) return;
@@ -546,8 +562,37 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
   const opts = { signal: listening.signal };
   const toaster = createToaster(shell.toast, timers, opts);
 
+  // ---- export / import ----
+
+  const transfer = createTransfer({
+    root,
+    footer: shell.footer,
+    getState: () => state,
+    now,
+    download,
+    writeBackup: (label, text) => storage.writeBackup(label, text),
+    recordExport(at) {
+      state = { ...state, lastExportAt: at };
+      const saved = persist();
+      if (saved === 'reloaded') render();
+      updateBackupStatus();
+      return saved;
+    },
+    replace(tasks, at) {
+      state = { ...state, tasks, lastExportAt: at };
+      editing = undefined;
+      const saved = persist(); // a conflict reloads instead, so nothing is replaced
+      render();
+      if (review) syncReview();
+      return saved;
+    },
+    announce: (message) => toaster.announce(message),
+    announceImport: (message) => toaster.show(message), // replaces the toast, ending any undo
+    signal: listening.signal,
+  });
+
   shell.input.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' || isComposing(event) || triage || review) return;
+    if (event.key !== 'Enter' || isComposing(event) || triage || review || transfer.isOpen()) return;
     event.preventDefault();
     startTriage();
   });
@@ -625,6 +670,8 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     commit,
     render,
     focusCapture,
+    exportTasks: () => transfer.exportTasks(),
+    importFile: (file) => transfer.importFile(file),
     deleteTask,
     clearDone: clearDoneTasks,
     dropAll,
