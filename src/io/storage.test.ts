@@ -401,6 +401,47 @@ describe('another tab changed the data (AC12)', () => {
   });
 });
 
+describe('two tabs on one localStorage (AC12 backstop)', () => {
+  const other: Task = { ...task, id: 'b', title: 'Call Sam' };
+  const tab = (ls: StubStorage) => createBrowserStorage({ storage: () => ls, now: () => NOW, navigator: {} });
+
+  it('whichever tab saves second on the same base gets a conflict, in either order', () => {
+    const ls = new StubStorage({ [MAIN_KEY]: serialize(stateAt(3)) });
+    const [a, b] = [tab(ls), tab(ls)];
+    a.load();
+    b.load();
+    expect(b.save(stateAt(3, [other]))).toMatchObject({ ok: true, rev: 4 });
+    expect(a.save(stateAt(3, []))).toMatchObject({ ok: false, reason: 'conflict' });
+    expect(stored(ls)).toStrictEqual(stateAt(4, [other]));
+  });
+
+  it('a rev reused after the main key vanished is still a conflict, not a silent overwrite', () => {
+    const ls = new StubStorage({ [MAIN_KEY]: serialize(stateAt(1)) });
+    const a = tab(ls);
+    a.load();
+    // Site data cleared or evicted while tab A sat in the back/forward cache and missed the event.
+    ls.data.delete(MAIN_KEY);
+    const b = tab(ls);
+    expect(b.load().state.rev).toBe(0);
+    expect(b.save(stateAt(0, [other]))).toMatchObject({ ok: true, rev: 1 });
+    // Tab A's rev is 1 too, but the rev 1 stored now is tab B's work.
+    expect(a.save(stateAt(1, []))).toMatchObject({ ok: false, reason: 'conflict' });
+    expect(stored(ls)).toStrictEqual(stateAt(1, [other]));
+  });
+
+  it('a rev reused after another tab reset unreadable data is still a conflict', () => {
+    const ls = new StubStorage({ [MAIN_KEY]: serialize(stateAt(1)) });
+    const a = tab(ls);
+    a.load();
+    ls.data.set(MAIN_KEY, 'garbage');
+    const b = tab(ls);
+    expect(b.load()).toMatchObject({ state: emptyState(), warning: WARNINGS.corruptBackedUp });
+    expect(b.save(stateAt(0, [other]))).toMatchObject({ ok: true, rev: 1 });
+    expect(a.save(stateAt(1, []))).toMatchObject({ ok: false, reason: 'conflict' });
+    expect(stored(ls)).toStrictEqual(stateAt(1, [other]));
+  });
+});
+
 describe('warnings', () => {
   it('match the plan wording where the plan gives it', () => {
     expect(WARNINGS.blocked).toBe('Not saving: your browser is blocking storage. Export before closing.');

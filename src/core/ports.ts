@@ -28,6 +28,8 @@ export type SaveResult =
  * If the stored rev differs, nothing is written and the result is a 'conflict'. Otherwise
  * the state is written with rev + 1 and the result returns that rev for the caller to keep.
  * When nothing is stored at all there is nothing to overwrite, so that is not a conflict.
+ * Revs restart at 0 when a tab starts from an empty board, so an adapter may also report a
+ * conflict when the stored rev matches but the stored data is not what this tab last saw.
  */
 export interface StoragePort {
   load(): LoadResult;

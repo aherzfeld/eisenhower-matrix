@@ -39,8 +39,17 @@ export type BrowserStorageOptions = {
   navigator?: PersistNavigator;
 };
 
-/** The main key holds a value we could not save over without a backup, and the backup exists. */
-type Guarded = { raw: string; rev: number; label: string; warning: string };
+/**
+ * What this tab last read from or wrote to the main key, and the rev it handed the caller for
+ * it. The main key may be overwritten only while it still holds exactly `raw` (or nothing).
+ * Comparing the text, not just the rev, matters because revs restart at 0 whenever a tab
+ * starts from an empty board: after the key is cleared, or after unreadable data is reset,
+ * another tab's rev N is not this tab's rev N.
+ */
+type Base = { raw: string | null; rev: number };
+
+/** `base.raw` is unreadable or old-format data: back it up (again, if needed) before overwriting it. */
+type Guarded = { label: string; warning: string };
 
 /** A session-long refusal to write: storage we can't read, a failed backup, or a newer version. */
 type Lock = { mode: 'memory' | 'readonly'; warning: string };
@@ -53,6 +62,7 @@ export function createBrowserStorage({
 }: BrowserStorageOptions = {}): StoragePort {
   let mode: StorageMode = 'persistent';
   let lock: Lock | null = null;
+  let base: Base = { raw: null, rev: 0 };
   let guarded: Guarded | null = null;
   /** The last backup written per label, so reloading the same bad value doesn't copy it twice. */
   const backups = new Map<string, { raw: string; key: string }>();
@@ -88,6 +98,7 @@ export function createBrowserStorage({
   function load(): LoadResult {
     lock = null;
     guarded = null;
+    base = { raw: null, rev: 0 };
     let store: KeyValueStore;
     let raw: string | null;
     try {
@@ -102,13 +113,14 @@ export function createBrowserStorage({
     if (raw === null) return { state: emptyState(), mode };
 
     const parsed = parse(raw);
+    if (parsed.ok) base = { raw, rev: parsed.value.rev };
     if (parsed.ok && parsed.migratedFrom === undefined) return { state: parsed.value, mode };
 
     if (parsed.ok) {
       const label = `pre-v${CURRENT_VERSION}`;
       const warning = WARNINGS.migrationNotBackedUp;
       if (!ensureBackup(store, label, raw)) return locked({ mode: 'memory', warning }, parsed.value);
-      guarded = { raw, rev: parsed.value.rev, label, warning };
+      guarded = { label, warning };
       return { state: parsed.value, mode };
     }
 
@@ -118,7 +130,8 @@ export function createBrowserStorage({
 
     const warning = WARNINGS.corruptNotBackedUp;
     if (!ensureBackup(store, '', raw)) return locked({ mode: 'memory', warning }, emptyState(), { raw });
-    guarded = { raw, rev: 0, label: '', warning };
+    base = { raw, rev: 0 };
+    guarded = { label: '', warning };
     return { state: emptyState(), mode, warning: WARNINGS.corruptBackedUp, raw };
   }
 
@@ -142,33 +155,33 @@ export function createBrowserStorage({
     }
 
     if (raw !== null) {
-      if (guarded && raw === guarded.raw) {
-        if (state.rev !== guarded.rev) return conflict();
-        if (!ensureBackup(store, guarded.label, raw)) {
-          lock = { mode: 'memory', warning: guarded.warning };
-          mode = 'memory';
-          return { ok: false, mode, reason: 'unavailable', error: lock.warning };
-        }
-      } else {
+      if (raw !== base.raw) {
         const current = parse(raw);
         if (!current.ok && current.error.kind === 'future-version') {
           lock = { mode: 'readonly', warning: WARNINGS.newer };
           mode = 'readonly';
           return { ok: false, mode, reason: 'readonly', error: WARNINGS.newer };
         }
-        // Unreadable or old-format data that appeared since load() is not ours to overwrite:
-        // the caller reloads, and load() backs it up.
-        if (!current.ok || current.migratedFrom !== undefined) return conflict();
-        if (current.value.rev !== state.rev) return conflict();
+        // Anything else written since our last load or save is not ours to overwrite, even at
+        // the same rev: the caller reloads, and load() backs up whatever needs it.
+        return conflict();
+      }
+      if (state.rev !== base.rev) return conflict();
+      if (guarded && !ensureBackup(store, guarded.label, raw)) {
+        lock = { mode: 'memory', warning: guarded.warning };
+        mode = 'memory';
+        return { ok: false, mode, reason: 'unavailable', error: lock.warning };
       }
     }
 
     const rev = state.rev + 1;
+    const text = serialize({ ...state, rev });
     try {
-      store.setItem(MAIN_KEY, serialize({ ...state, rev }));
+      store.setItem(MAIN_KEY, text);
     } catch {
       return unavailable();
     }
+    base = { raw: text, rev };
     guarded = null;
     mode = 'persistent';
     return { ok: true, mode, rev };
