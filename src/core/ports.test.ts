@@ -64,3 +64,16 @@ describe('createMemoryStorage', () => {
     expect(cb).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('createMemoryStorage writeBackup', () => {
+  it('records backups in persistent mode', () => {
+    const s = createMemoryStorage();
+    expect(s.writeBackup('pre-import', 'text')).toBe(true);
+    expect(s.backups).toEqual([{ label: 'pre-import', text: 'text' }]);
+  });
+  it.each(['memory', 'readonly'] as const)('fails and records nothing in %s mode', (mode) => {
+    const s = createMemoryStorage({ mode });
+    expect(s.writeBackup('pre-import', 'text')).toBe(false);
+    expect(s.backups).toEqual([]);
+  });
+});
