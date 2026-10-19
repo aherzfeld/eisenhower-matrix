@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isDue, localToday, msUntilMidnight } from './dates';
+import { daysSince, isDue, localToday, msUntilMidnight } from './dates';
 import type { Task } from './task';
 
 // Dates are built from local components, so these pass in any time zone (CI runs two).
@@ -73,5 +73,19 @@ describe('isDue', () => {
     ]) {
       expect(isDue(task({ ...flags, when: '2026-03-01' }), today)).toBe(false);
     }
+  });
+});
+
+describe('daysSince (local calendar days)', () => {
+  const now = local(2026, 10, 19, 0, 30);
+  it.each<[string, Date, number]>([
+    ['earlier the same day', local(2026, 10, 19, 0, 5), 0],
+    ['23:59 yesterday, a minute ago', local(2026, 10, 18, 23, 59), 1],
+    ['a week ago', local(2026, 10, 12, 23, 30), 7],
+    ['eight days ago', local(2026, 10, 11, 9), 8],
+    ['across a month boundary', local(2026, 9, 30, 12), 19],
+    ['in the future (clock skew) counts as today', local(2026, 10, 21), 0],
+  ])('%s', (_label, then, days) => {
+    expect(daysSince(then.toISOString(), now)).toBe(days);
   });
 });

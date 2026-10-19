@@ -6,6 +6,7 @@ import {
   setFlags,
   setWhen,
   setWho,
+  sameTasks,
   toggleDone,
 } from './task';
 import { quadrantOf } from './quadrant';
@@ -194,5 +195,30 @@ describe('purity', () => {
   it('returns a new array even for no-ops', () => {
     const tasks = add([], 'a');
     expect(must(reorder(tasks, 'a', 'up', T1))).not.toBe(tasks);
+  });
+});
+
+describe('sameTasks (no-op detection)', () => {
+  const a: Task = { id: 'a', title: 'A', urgent: true, important: true, done: false, order: 0, createdAt: T0, updatedAt: T0 };
+  const b: Task = { ...a, id: 'b', order: 1 };
+
+  it('is true for copies, and for a move to the quadrant the task is already in', () => {
+    expect(sameTasks([a, b], [{ ...a }, { ...b }])).toBe(true);
+    expect(sameTasks([a, b], must(setFlags([a, b], 'a', { urgent: true, important: true }, T1)))).toBe(true);
+  });
+
+  it('ignores a change to updatedAt alone', () => {
+    expect(sameTasks([a], [{ ...a, updatedAt: T1 }])).toBe(true);
+    expect(sameTasks([a], must(setWho([a], 'a', '  ', T1)))).toBe(true);
+  });
+
+  it('sees every other change: a field, an added or removed field, length, and array order', () => {
+    expect(sameTasks([a], [{ ...a, done: true }])).toBe(false);
+    expect(sameTasks([a], [{ ...a, who: 'Sam' }])).toBe(false);
+    expect(sameTasks([{ ...a, who: 'Sam' }], [a])).toBe(false);
+    expect(sameTasks([{ ...a, who: 'Sam' }], [{ ...a, when: '2026-10-20' }])).toBe(false);
+    expect(sameTasks([a], [a, b])).toBe(false);
+    expect(sameTasks([a, b], [b, a])).toBe(false);
+    expect(sameTasks([a], must(setFlags([a], 'a', { urgent: false, important: true }, T1)))).toBe(false);
   });
 });

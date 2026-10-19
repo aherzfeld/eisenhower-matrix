@@ -19,3 +19,14 @@ export function msUntilMidnight(now: Date): number {
 export function isDue(task: Task, today: string): boolean {
   return !task.done && quadrantOf(task) === 'schedule' && task.when !== undefined && task.when <= today;
 }
+
+/**
+ * Whole local calendar days from the instant `iso` to `now`: 0 the same day, 1 after one
+ * midnight. A time in the future (a skewed clock) counts as 0. DST-safe: compares local
+ * dates, not elapsed milliseconds.
+ */
+export function daysSince(iso: string, now: Date): number {
+  const then = new Date(iso);
+  const day = (d: Date) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  return Math.max(0, Math.round((day(now) - day(then)) / 86_400_000));
+}
