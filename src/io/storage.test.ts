@@ -162,6 +162,24 @@ describe('localStorage throws on read or write', () => {
     ['a TypeError', new TypeError('weird'), WARNINGS.blocked],
     ['a thrown string', 'weird', WARNINGS.blocked],
     ['a thrown null-prototype object', Object.create(null), WARNINGS.blocked],
+    [
+      'an error whose name cannot be read',
+      Object.defineProperty(new Error('odd'), 'name', {
+        get() {
+          throw new Error('no name');
+        },
+      }),
+      WARNINGS.blocked,
+    ],
+    [
+      'a revoked proxy',
+      (() => {
+        const p = Proxy.revocable({}, {});
+        p.revoke();
+        return p.proxy;
+      })(),
+      WARNINGS.blocked,
+    ],
   ])('any setItem throw is a failed save: %s', (_label, error, warning) => {
     const { ls, port } = setup({ [MAIN_KEY]: serialize(stateAt(4)) });
     port.load();

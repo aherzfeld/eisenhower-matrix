@@ -199,11 +199,19 @@ export function createBrowserStorage({
   return { load, save, subscribe };
 }
 
-/** A full store, as each engine reports it. Anything else that throws counts as blocked. */
+/**
+ * A full store, as each engine reports it. Anything else that throws counts as blocked. Never
+ * throws itself (reading `name` off an odd thrown value can), so every failed write stays a
+ * failed save.
+ */
 function isQuotaError(e: unknown): boolean {
-  if (typeof e !== 'object' || e === null) return false;
-  const { name, code } = e as { name?: unknown; code?: unknown };
-  return name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED' || code === 22 || code === 1014;
+  try {
+    if (typeof e !== 'object' || e === null) return false;
+    const { name, code } = e as { name?: unknown; code?: unknown };
+    return name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED' || code === 22 || code === 1014;
+  } catch {
+    return false;
+  }
 }
 
 function hasBackup(store: KeyValueStore, raw: string): boolean {
