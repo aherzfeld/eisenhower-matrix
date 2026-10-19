@@ -21,3 +21,7 @@ npm run e2e     # browser smoke tests (Playwright; first run: npx playwright ins
 ```
 
 The build plan is in [`docs/plans/v1.md`](docs/plans/v1.md).
+
+## Deploying
+
+Every push to `main` deploys to Cloudflare Pages (project `eisenhower-matrix`), but only after the full CI job passes. The deployed files are the exact build that was tested. The repo needs two Actions secrets: `CLOUDFLARE_API_TOKEN` (an API token with the Account › Cloudflare Pages › Edit permission) and `CLOUDFLARE_ACCOUNT_ID`.
