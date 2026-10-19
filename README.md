@@ -5,6 +5,12 @@ Do, Schedule, Delegate, Delete.
 
 Your tasks are stored only in your own browser. Nothing is sent to a server.
 
+![The board in the light theme: Do, Schedule, Delegate and Delete as four riso-printed quadrants](docs/screenshots/board-light-desktop.png)
+
+The look ("Riso desk") is specified in [`docs/design.md`](docs/design.md). More screenshots,
+in both themes and at phone width, are in [`docs/screenshots`](docs/screenshots). To
+regenerate them: `SCREENSHOTS=1 npx playwright test screenshots`.
+
 ## Development
 
 ```
