@@ -4,11 +4,25 @@
  * it holds is either ours (a rev we know) or already safely copied to a backup key.
  */
 import { CURRENT_VERSION, parse, serialize } from '../core/codec';
-import { emptyState, type LoadResult, type SaveResult, type StorageMode, type StoragePort } from '../core/ports';
+import {
+  emptyState,
+  type BackupResult,
+  type LoadResult,
+  type SaveResult,
+  type StorageMode,
+  type StoragePort,
+} from '../core/ports';
 import type { StoredState } from '../core/task';
 
 export const MAIN_KEY = 'eisenhower:v1';
 export const BACKUP_PREFIX = 'eisenhower:backup:';
+
+/** How many pre-import backups to keep, counting the one just written (decided on #11). */
+export const PRE_IMPORT_KEEP = 3;
+const PRE_IMPORT_LABEL = 'pre-import';
+const PRE_IMPORT_PREFIX = `${BACKUP_PREFIX}${PRE_IMPORT_LABEL}:`;
+/** What writeNewBackup puts after the prefix: an ISO timestamp, then `-N` (N from 1) if that key was taken. */
+const BACKUP_STAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)(?:-([1-9]\d*))?$/;
 
 /** Banner text. Plain words; the first three are the plan's own. */
 export const WARNINGS = {
@@ -25,7 +39,7 @@ export const WARNINGS = {
 } as const;
 
 /** The part of the DOM Storage interface this adapter uses. */
-export type KeyValueStore = Pick<Storage, 'getItem' | 'setItem' | 'key' | 'length'>;
+export type KeyValueStore = Pick<Storage, 'getItem' | 'setItem' | 'removeItem' | 'key' | 'length'>;
 
 type EventSource = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>;
 type PersistNavigator = { storage?: { persist?: () => Promise<boolean> } };
@@ -74,32 +88,38 @@ export function createBrowserStorage({
    */
   function ensureBackup(store: KeyValueStore, label: string, raw: string): boolean {
     try {
-      return hasBackup(store, raw) || writeNewBackup(store, label, raw);
+      return hasBackup(store, raw) || writeNewBackup(store, label, raw) !== null;
     } catch {
       return false;
     }
   }
 
-  /** Writes `raw` to an unused backup key and checks it reads back. May throw. */
-  function writeNewBackup(store: KeyValueStore, label: string, raw: string): boolean {
-    const base = `${BACKUP_PREFIX}${label ? `${label}:` : ''}${new Date(now()).toISOString()}`;
-    let key = base;
-    for (let i = 1; store.getItem(key) !== null; i++) {
-      if (i > 100) return false;
-      key = `${base}-${i}`;
-    }
+  /** Writes `raw` to an unused backup key and checks it reads back: the key, or null. May throw. */
+  function writeNewBackup(store: KeyValueStore, label: string, raw: string): string | null {
+    const key = nextBackupKey(store, `${BACKUP_PREFIX}${label ? `${label}:` : ''}${new Date(now()).toISOString()}`);
+    if (store.getItem(key) !== null) return null; // never overwrite a backup
     store.setItem(key, raw);
-    return store.getItem(key) === raw;
+    return store.getItem(key) === raw ? key : null;
   }
 
-  /** Always a fresh key, so an earlier backup is never overwritten. Never throws. */
-  function writeBackup(label: string, text: string): boolean {
-    if (lock?.mode === 'readonly') return false;
+  /**
+   * Always a fresh key, so an earlier backup is never overwritten. Never throws. Once a
+   * pre-import backup has read back, older pre-import backups beyond the newest
+   * PRE_IMPORT_KEEP are removed (#11); nothing is removed if the write failed.
+   */
+  function writeBackup(label: string, text: string): BackupResult {
+    if (lock?.mode === 'readonly') return 'failed';
+    let store: KeyValueStore;
+    let key: string | null;
     try {
-      return writeNewBackup(storage(), label, text);
-    } catch {
-      return false;
+      store = storage();
+      key = writeNewBackup(store, label, text);
+    } catch (e) {
+      return isQuotaError(e) ? 'full' : 'failed';
     }
+    if (key === null) return 'failed';
+    if (label === PRE_IMPORT_LABEL) prunePreImportBackups(store, key);
+    return 'ok';
   }
 
   function locked(next: Lock, state: StoredState, extra: { raw?: string } = {}): LoadResult {
@@ -228,12 +248,83 @@ function isQuotaError(e: unknown): boolean {
   }
 }
 
+/**
+ * `base`, or `base-N` with N past every `base` / `base-N` already stored. Never a freed lower
+ * N, so a later backup always orders after an earlier one even once older ones are removed.
+ * May throw.
+ */
+function nextBackupKey(store: KeyValueStore, base: string): string {
+  let next = 0;
+  for (let i = 0; i < store.length; i++) {
+    const key = store.key(i);
+    if (key === base) next = Math.max(next, 1);
+    else if (key?.startsWith(`${base}-`)) {
+      const suffix = key.slice(base.length + 1);
+      const n = Number(suffix);
+      if (/^[1-9]\d*$/.test(suffix) && Number.isSafeInteger(n + 1)) next = Math.max(next, n + 1);
+    }
+  }
+  return next === 0 ? base : `${base}-${next}`;
+}
+
+/**
+ * Some backup key already holds exactly `raw`. Pre-import backups don't count: they may be
+ * pruned, so they can't be the backup that guards the main key.
+ */
 function hasBackup(store: KeyValueStore, raw: string): boolean {
   for (let i = 0; i < store.length; i++) {
     const key = store.key(i);
-    if (key?.startsWith(BACKUP_PREFIX) && store.getItem(key) === raw) return true;
+    if (!key?.startsWith(BACKUP_PREFIX) || key.startsWith(PRE_IMPORT_PREFIX)) continue;
+    if (store.getItem(key) === raw) return true;
   }
   return false;
+}
+
+/** Orders a pre-import backup key: its timestamp, then its `-N` suffix (none is 0). Null for any other key. */
+function parsePreImportKey(key: string): { ms: number; n: number } | null {
+  if (!key.startsWith(PRE_IMPORT_PREFIX)) return null;
+  const match = BACKUP_STAMP.exec(key.slice(PRE_IMPORT_PREFIX.length));
+  if (!match) return null;
+  const [, stamp, suffix] = match;
+  const ms = Date.parse(stamp!);
+  // Round-trips exactly, so no date the engine would quietly roll over (Feb 30) gets through.
+  if (!Number.isFinite(ms) || new Date(ms).toISOString() !== stamp) return null;
+  const n = suffix === undefined ? 0 : Number(suffix);
+  return Number.isSafeInteger(n) ? { ms, n } : null;
+}
+
+/**
+ * Pure: which of `keys` to remove so that `keep` pre-import backups remain, counting
+ * `justWritten`, which is never selected (even if a clock moved back makes it look oldest).
+ * Only keys that parse exactly as `eisenhower:backup:pre-import:<ISO ts>[-N]` are ever
+ * selected; the rest are ordered newest first by timestamp, then by N.
+ */
+export function preImportBackupsToPrune(keys: readonly string[], justWritten: string, keep: number): string[] {
+  const older: { key: string; ms: number; n: number }[] = [];
+  for (const key of keys) {
+    if (key === justWritten) continue;
+    const parsed = parsePreImportKey(key);
+    if (parsed) older.push({ key, ...parsed });
+  }
+  older.sort((a, b) => b.ms - a.ms || b.n - a.n);
+  return older.slice(Math.max(keep - 1, 0)).map((b) => b.key);
+}
+
+/**
+ * Removes the pre-import backups beyond the newest PRE_IMPORT_KEEP. Best effort and never
+ * throws: the import it follows goes ahead regardless, and the first failure ends the pass.
+ */
+function prunePreImportBackups(store: KeyValueStore, justWritten: string): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < store.length; i++) {
+      const key = store.key(i);
+      if (key !== null) keys.push(key);
+    }
+    for (const key of preImportBackupsToPrune(keys, justWritten, PRE_IMPORT_KEEP)) store.removeItem(key);
+  } catch {
+    // Left for the next import to try again.
+  }
 }
 
 /** Asks the browser not to evict our data (Safari's 7-day rule). Best effort, never awaited. */

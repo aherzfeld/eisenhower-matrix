@@ -7,6 +7,7 @@
  */
 import { parse, serialize, type ParseError } from '../core/codec';
 import { localToday } from '../core/dates';
+import type { BackupResult } from '../core/ports';
 import type { StoredState } from '../core/task';
 
 /** How a save through the app's normal path ended (see app.ts `persist`). */
@@ -20,7 +21,7 @@ export type TransferDeps = {
   /** ISO timestamp. */
   now(): string;
   download(text: string, filename: string): void;
-  writeBackup(label: string, text: string): boolean;
+  writeBackup(label: string, text: string): BackupResult;
   /** Sets `lastExportAt` and saves. */
   recordExport(at: string): SaveOutcome;
   /** Replaces the tasks (keeping this tab's rev), sets `lastExportAt`, saves and re-renders. */
@@ -53,6 +54,8 @@ export type Transfer = {
 };
 
 export const BACKUP_FAILED = "Nothing was imported: your current tasks couldn't be backed up first.";
+export const BACKUP_FULL =
+  "Browser storage is full, so your current tasks couldn't be backed up and nothing was imported. Export your tasks, then clear some space.";
 export const IMPORT_CONFLICT = 'Changed in another tab, so nothing was imported. Check the board, then try again.';
 export const UNREADABLE_FILE = "The file couldn't be read.";
 const TEXT_ID = 'import-confirm-text';
@@ -204,8 +207,9 @@ export function createTransfer(deps: TransferDeps): Transfer {
     if (!pending || !panel) return;
     const current = serialize(deps.getState());
     // (1) The current board is backed up before anything else, or nothing happens.
-    if (!deps.writeBackup('pre-import', current)) {
-      panel.error.textContent = BACKUP_FAILED;
+    const backup = deps.writeBackup('pre-import', current);
+    if (backup !== 'ok') {
+      panel.error.textContent = backup === 'full' ? BACKUP_FULL : BACKUP_FAILED;
       return;
     }
     const at = deps.now();
