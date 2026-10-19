@@ -35,7 +35,7 @@ export function resolveKey(event: KeyboardEvent): KeyAction | undefined {
   if (isTyping(event)) return undefined;
   const { key } = event;
   // Undo only fires out of a text field (isTyping returned above), so the browser's own undo wins there.
-  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && (key === 'z' || key === 'Z')) {
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && (key === 'z' || key === 'Z' || event.code === 'KeyZ')) {
     return { type: 'undo' };
   }
   if (event.ctrlKey || event.metaKey) return undefined;

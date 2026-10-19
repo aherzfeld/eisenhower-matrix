@@ -41,6 +41,24 @@ describe('resolveKey', () => {
     expect(resolveKey(press({ key: 'Z', metaKey: true }))).toEqual({ type: 'undo' });
   });
 
+  it('maps Ctrl/Cmd+Z to undo by physical key on a non-Latin layout (Russian)', () => {
+    expect(resolveKey(press({ key: 'я', code: 'KeyZ', metaKey: true }))).toEqual({ type: 'undo' });
+    expect(resolveKey(press({ key: 'я', code: 'KeyZ', ctrlKey: true }))).toEqual({ type: 'undo' });
+  });
+
+  it('leaves a KeyZ chord alone inside an input, with Shift, or with Alt', () => {
+    expect(resolveKey(press({ key: 'я', code: 'KeyZ', metaKey: true }, document.createElement('input')))).toBeUndefined();
+    expect(resolveKey(press({ key: 'я', code: 'KeyZ', metaKey: true, shiftKey: true }))).toBeUndefined();
+    expect(resolveKey(press({ key: 'я', code: 'KeyZ', ctrlKey: true, altKey: true }))).toBeUndefined();
+    expect(resolveKey(press({ key: 'я', code: 'KeyZ' }))).toBeUndefined();
+  });
+
+  it('never claims the key itself: app.ts does that only while an undo is live', () => {
+    const e = press({ key: 'я', code: 'KeyZ', metaKey: true });
+    resolveKey(e);
+    expect(e.defaultPrevented).toBe(false);
+  });
+
   it('does not treat Shift+Cmd+Z (redo), Alt chords or a bare z as undo', () => {
     expect(resolveKey(press({ key: 'z', metaKey: true, shiftKey: true }))).toBeUndefined();
     expect(resolveKey(press({ key: 'z', ctrlKey: true, altKey: true }))).toBeUndefined();
