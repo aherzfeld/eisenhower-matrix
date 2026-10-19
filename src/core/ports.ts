@@ -7,8 +7,12 @@ import type { StoredState } from './task';
  */
 export type StorageMode = 'persistent' | 'memory' | 'readonly';
 
-/** `warning` is text for a persistent banner (blocked storage, corrupt data, newer version). */
-export type LoadResult = { state: StoredState; mode: StorageMode; warning?: string };
+/**
+ * `warning` is text for a persistent banner (blocked storage, corrupt data, newer version).
+ * `raw` is set only when the stored data could not be read: it is the unreadable value,
+ * byte for byte, for the banner to offer as a download.
+ */
+export type LoadResult = { state: StoredState; mode: StorageMode; warning?: string; raw?: string };
 
 /** conflict: another tab saved since our rev; load() again. unavailable: storage failed (memory mode). */
 export type SaveFailure = 'conflict' | 'readonly' | 'unavailable';
@@ -23,6 +27,9 @@ export type SaveResult =
  * Rev contract: `state.rev` passed to save() is the rev the caller last loaded or saved.
  * If the stored rev differs, nothing is written and the result is a 'conflict'. Otherwise
  * the state is written with rev + 1 and the result returns that rev for the caller to keep.
+ * When nothing is stored at all there is nothing to overwrite, so that is not a conflict.
+ * Revs restart at 0 when a tab starts from an empty board, so an adapter may also report a
+ * conflict when the stored rev matches but the stored data is not what this tab last saw.
  */
 export interface StoragePort {
   load(): LoadResult;
