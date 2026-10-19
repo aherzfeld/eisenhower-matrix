@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '../core/task';
-import { reviewKey, reviewProgress, reviewQueue, startReview, type Review } from './review';
+import { reviewKey, reviewProgress, reviewQueue, settleReview, startReview, type Review } from './review';
 
 const NOW = '2026-03-01T12:00:00.000Z';
 function task(id: string, urgent: boolean, important: boolean, order = 0, done = false): Task {
@@ -75,5 +75,28 @@ describe('reviewKey', () => {
 
   it('cancels on Escape', () => {
     expect(reviewKey(start(), 'Escape')).toEqual({ kind: 'cancel' });
+  });
+});
+
+describe('settleReview', () => {
+  const tasks = [task('a', true, true), task('b', false, true), task('c', false, false)];
+  const at = (index: number, triage: Review['triage'] = { step: 'important' }): Review => ({
+    queue: ['a', 'b', 'c'], index, triage,
+  });
+
+  it('leaves the review alone while its current task is still open', () => {
+    const r = at(0, { step: 'urgent', important: true });
+    expect(settleReview(r, tasks)).toBe(r);
+    expect(settleReview(r, tasks.filter((t) => t.id !== 'b'))).toBe(r); // a later gap waits its turn
+  });
+
+  it('skips past deleted and done tasks, and restarts the pair on the next one', () => {
+    const r = at(0, { step: 'urgent', important: false });
+    const next = settleReview(r, [task('b', false, true, 0, true), task('c', false, false)]);
+    expect(next).toEqual({ queue: ['a', 'b', 'c'], index: 2, triage: { step: 'important' } });
+  });
+
+  it('is undefined once nothing open is left in the queue', () => {
+    expect(settleReview(at(1), [task('a', true, true)])).toBeUndefined();
   });
 });

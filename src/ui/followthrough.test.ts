@@ -42,6 +42,7 @@ const titles = (name: string) => [...q(name).querySelectorAll('.task__title')].m
 const input = () => root.querySelector<HTMLInputElement>('.capture__input')!;
 const prompt = () => root.querySelector<HTMLElement>('.prompt')!;
 const toast = () => root.querySelector<HTMLElement>('.toast-slot')!;
+const message = () => root.querySelector<HTMLElement>('.capture__message')!;
 const taskIn = (id: string) => app!.getState().tasks.find((t) => t.id === id)!;
 
 function key(target: Element | Document, k: string, init: KeyboardEventInit = {}): KeyboardEvent {
@@ -224,10 +225,28 @@ describe('Delegate and Do follow-through (AC10)', () => {
     expect(row('d').querySelector('.task__who')).toBeNull();
   });
 
-  it('rejects an over-long who without losing the old value', () => {
+  it('rejects an over-long who without losing the old value, and says why', () => {
     boot([task('g', 'Send quote', true, false, { who: 'Sam' })]);
-    setField(row('g').querySelector<HTMLInputElement>('.task__who')!, 'x'.repeat(81));
+    const who = row('g').querySelector<HTMLInputElement>('.task__who')!;
+    setField(who, 'x'.repeat(81));
     expect(taskIn('g').who).toBe('Sam');
+    expect(who.value).toBe('Sam'); // the field shows what was saved, not the rejected text
+    expect(message().textContent).toBe('Who must be at most 80 characters.');
+    expect(row('g').querySelector('.stamp--waiting')!.textContent).toBe('Waiting on Sam');
+  });
+
+  it('shows the trimmed who in the field, and an empty field for whitespace', () => {
+    boot([task('g', 'Send quote', true, false)]);
+    const who = row('g').querySelector<HTMLInputElement>('.task__who')!;
+    setField(who, '  Sam  ');
+    expect(who.value).toBe('Sam');
+    setField(who, '   ');
+    expect(who.value).toBe('');
+  });
+
+  it('keeps a stored who quiet once the task leaves Delegate', () => {
+    boot([task('g', 'Send quote', true, true, { who: 'Sam' })]);
+    expect(root.querySelector('.stamp--waiting')).toBeNull();
   });
 
   it('marks the top open Do task as Next', () => {
@@ -242,6 +261,22 @@ describe('Delegate and Do follow-through (AC10)', () => {
     expect(row('b').querySelector('.stamp--next')).not.toBeNull();
     boot([task('c', 'C', true, true, { done: true })]);
     expect(root.querySelector('.stamp--next')).toBeNull();
+  });
+
+  it('moves Next after a reorder, a done toggle, a removal and its undo', () => {
+    boot([task('a', 'A', true, true, { order: 0 }), task('b', 'B', true, true, { order: 1 })]);
+    const nextId = () => root.querySelector('.stamp--next')?.closest<HTMLElement>('.task')?.dataset.taskId;
+    row('b').focus();
+    key(row('b'), 'ArrowUp', { altKey: true });
+    expect(nextId()).toBe('b');
+    row('b').focus();
+    key(row('b'), ' ');
+    expect(nextId()).toBe('a');
+    app!.deleteTask('a');
+    expect(nextId()).toBeUndefined(); // only the done task is left
+    app!.undo();
+    expect(nextId()).toBe('a');
+    expect(root.querySelectorAll('.stamp--next')).toHaveLength(1);
   });
 
   it('does not put Next on other quadrants', () => {
@@ -323,6 +358,62 @@ describe('review mode (AC11)', () => {
     key(input(), 'r');
     expect(prompt().dataset.active).toBe('false');
   });
+
+  it('blocks Delete, Backspace and Cmd/Ctrl+Z while it runs', () => {
+    boot(three());
+    app!.deleteTask('c');
+    row('a').focus();
+    key(document.body, 'r');
+    key(row('a'), 'Delete');
+    key(row('a'), 'Backspace');
+    const z = key(document.body, 'z', { metaKey: true });
+    key(document.body, 'z', { ctrlKey: true });
+    expect(z.defaultPrevented).toBe(false);
+    expect(app!.getState().tasks.map((t) => t.id).sort()).toEqual(['a', 'b']);
+    expect(prompt().textContent).toContain('Alpha');
+  });
+
+  it('returns focus to the row it started from, or to the capture input', () => {
+    boot(three());
+    row('b').focus();
+    key(row('b'), 'r');
+    key(document.body, 'Escape');
+    expect(document.activeElement).toBe(row('b'));
+    (document.activeElement as HTMLElement).blur();
+    key(document.body, 'r');
+    key(document.body, 'Escape');
+    expect(document.activeElement).toBe(input());
+  });
+
+  it('skips a queued task that was deleted mid-review', () => {
+    boot(three());
+    key(document.body, 'r');
+    row('b').querySelector<HTMLButtonElement>('.task__delete')!.click();
+    key(document.body, 'y');
+    key(document.body, 'y'); // Alpha stays in Do
+    expect(prompt().textContent).toContain('Gamma');
+    expect(prompt().textContent).toContain('3 of 3');
+  });
+
+  it('moves on when the task being asked about is deleted or marked done mid-pair', () => {
+    boot(three());
+    key(document.body, 'r');
+    key(document.body, 'n'); // Alpha: answered Important only
+    row('a').querySelector<HTMLButtonElement>('.task__delete')!.click();
+    expect(prompt().textContent).toContain('Beta');
+    expect(prompt().querySelector('.prompt__question')!.textContent).toBe('Important?');
+    row('b').querySelector<HTMLInputElement>('.task__check')!.click();
+    expect(prompt().textContent).toContain('Gamma');
+  });
+
+  it('ends when every remaining task is gone', () => {
+    boot([task('a', 'Alpha', true, true)]);
+    key(document.body, 'r');
+    row('a').querySelector<HTMLButtonElement>('.task__delete')!.click();
+    expect(prompt().dataset.active).toBe('false');
+    key(document.body, 'z', { metaKey: true }); // undo is live again once review has ended
+    expect(titles('do')).toEqual(['Alpha']);
+  });
 });
 
 describe('Cmd/Ctrl+Z undo', () => {
@@ -364,6 +455,17 @@ describe('Cmd/Ctrl+Z undo', () => {
     app!.deleteTask('a');
     vi.advanceTimersByTime(5100);
     expect(key(document.body, 'z', { metaKey: true }).defaultPrevented).toBe(false);
+    expect(titles('do')).toEqual(['Beta']);
+  });
+
+  it('is ignored during the triage prompt', () => {
+    boot(two());
+    app!.deleteTask('a');
+    input().value = 'New';
+    key(input(), 'Enter');
+    expect(prompt().dataset.active).toBe('true');
+    const e = key(document.body, 'z', { metaKey: true });
+    expect(e.defaultPrevented).toBe(false);
     expect(titles('do')).toEqual(['Beta']);
   });
 
@@ -413,6 +515,18 @@ describe('placement announcement', () => {
       document.body.innerHTML = '<div id="app"></div>';
       root = document.getElementById('app')!;
     }
+  });
+
+  it('neither shortens nor extends the undo window (AC7)', () => {
+    boot([task('a', 'Alpha', true, true)]);
+    app!.deleteTask('a');
+    vi.advanceTimersByTime(3000);
+    addByKeys('Call Sam', 'y', 'n');
+    vi.advanceTimersByTime(1900); // 4.9 s after the delete
+    expect(toast().querySelector('.toast__undo')).not.toBeNull();
+    vi.advanceTimersByTime(200); // 5.1 s
+    expect(toast().querySelector('.toast__undo')).toBeNull();
+    expect(app!.undo()).toBe(false);
   });
 
   it('does not take away a live Undo', () => {

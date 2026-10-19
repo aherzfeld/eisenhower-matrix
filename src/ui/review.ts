@@ -25,6 +25,19 @@ export function startReview(tasks: readonly Task[]): Review | undefined {
   return queue.length === 0 ? undefined : { queue, index: 0, triage: START };
 }
 
+/**
+ * Re-points the review after the tasks changed under it (a click deleted or completed one).
+ * Skips queued tasks that are gone or done, restarting the pair on the next open one.
+ * Returns `review` itself when its current task is still open; undefined when none is left.
+ */
+export function settleReview(review: Review, tasks: readonly Task[]): Review | undefined {
+  const open = new Set(tasks.filter((t) => !t.done).map((t) => t.id));
+  let index = review.index;
+  while (index < review.queue.length && !open.has(review.queue[index]!)) index++;
+  if (index === review.index) return review;
+  return index < review.queue.length ? { ...review, index, triage: START } : undefined;
+}
+
 export function reviewProgress(review: Review): string {
   return `${review.index + 1} of ${review.queue.length}`;
 }

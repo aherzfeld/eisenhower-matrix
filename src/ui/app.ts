@@ -10,7 +10,7 @@ import { START, paintSquares, renderPrompt, squareClasses, triageKey, type Triag
 import { isComposing, resolveKey, type KeyAction } from './keys';
 import { reorderVisible } from './order';
 import { buildShell, refreshStamps, renderBoard, sortedFor, type Editing, type Shell } from './render';
-import { reviewKey, reviewProgress, startReview, type Review } from './review';
+import { reviewKey, reviewProgress, settleReview, startReview, type Review } from './review';
 import { browserTimers, createToaster, type Timers } from './toast';
 
 export type AppOptions = {
@@ -119,6 +119,7 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     state = { ...state, tasks: result.value };
     persist();
     if (opts.render !== false) render(opts.focusId);
+    if (review) syncReview();
     return result;
   }
 
@@ -181,6 +182,16 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     });
   }
 
+  /** After any commit mid-review: skip queued tasks a click deleted or completed. */
+  function syncReview() {
+    if (!review) return;
+    const settled = settleReview(review, state.tasks);
+    if (settled === review) return;
+    review = settled;
+    if (review) showReview();
+    else endReview('Review complete');
+  }
+
   function startReviewMode() {
     if (triage || review) return;
     const started = startReview(state.tasks);
@@ -215,7 +226,7 @@ export function createApp({ root, storage, now, newId, timers = browserTimers }:
     if (current && quadrantOf(current) !== quadrantOf(outcome.flags)) {
       commit((tasks) => setFlags(tasks, outcome.id, outcome.flags, now()));
     }
-    review = outcome.review;
+    review = outcome.review && settleReview(outcome.review, state.tasks);
     if (review) showReview();
     else endReview('Review complete');
   }
