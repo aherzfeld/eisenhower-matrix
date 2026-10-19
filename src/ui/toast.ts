@@ -20,6 +20,11 @@ export const browserTimers: Timers = {
 export type Toaster = {
   /** Shows `message`; with `action`, an Undo button that runs it until the toast expires. */
   show(message: string, action?: () => void): void;
+  /**
+   * A plain status message. It never takes away a live Undo: while one is showing, the message
+   * is added to that toast as a note, so the same live region still announces it.
+   */
+  announce(message: string): void;
   /** Runs the live toast's action, if any, and clears the toast. False when there is none. */
   undo(): boolean;
   clear(): void;
@@ -66,6 +71,16 @@ export function createToaster(
     handle = timers.setTimeout(clear, ms);
   }
 
+  function announce(message: string) {
+    const live = action ? slot.querySelector('.toast') : null;
+    if (!live) return show(message);
+    live.querySelector('.toast__note')?.remove();
+    const note = doc.createElement('p');
+    note.className = 'toast__note';
+    note.textContent = message;
+    live.append(note);
+  }
+
   function undo() {
     const act = action;
     if (!act) return false;
@@ -78,5 +93,5 @@ export function createToaster(
     if (event.target instanceof Element && event.target.closest('.toast__undo')) undo();
   }, { signal });
 
-  return { show, undo, clear };
+  return { show, announce, undo, clear };
 }

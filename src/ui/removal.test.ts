@@ -195,9 +195,10 @@ describe('the undo window (AC7)', () => {
     };
     const storage = createMemoryStorage({ initial: { ...emptyState(), tasks: sam() } });
     app = createApp({ root, storage, now: () => NOW, newId: () => 'z', timers });
+    const armed = live.size; // the midnight timer is armed too
     pressDelete('sam');
     pressDelete('b');
-    expect(live.size).toBe(1);
+    expect(live.size).toBe(armed + 1);
     app.destroy();
     expect(live.size).toBe(0);
     expect(toastText()).toBeNull();

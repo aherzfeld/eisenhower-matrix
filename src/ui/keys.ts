@@ -8,7 +8,9 @@ export type KeyAction =
   | { type: 'reorder'; direction: 'up' | 'down' }
   | { type: 'toggleDone' }
   | { type: 'rename' }
-  | { type: 'remove' };
+  | { type: 'remove' }
+  | { type: 'review' }
+  | { type: 'undo' };
 
 const MOVE_KEYS: Record<string, Quadrant> = { '1': 'do', '2': 'schedule', '3': 'delegate', '4': 'delete' };
 
@@ -31,8 +33,12 @@ export function isTyping(event: KeyboardEvent): boolean {
 
 export function resolveKey(event: KeyboardEvent): KeyAction | undefined {
   if (isTyping(event)) return undefined;
-  if (event.ctrlKey || event.metaKey) return undefined;
   const { key } = event;
+  // Undo only fires out of a text field (isTyping returned above), so the browser's own undo wins there.
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && (key === 'z' || key === 'Z')) {
+    return { type: 'undo' };
+  }
+  if (event.ctrlKey || event.metaKey) return undefined;
 
   if (key === 'ArrowUp' || key === 'ArrowDown') {
     if (event.shiftKey) return undefined;
@@ -50,6 +56,6 @@ export function resolveKey(event: KeyboardEvent): KeyAction | undefined {
   // Not on auto-repeat: focus moves to the next row after a delete, so a held key would
   // empty the quadrant while Undo covers only the last removal.
   if (key === 'Delete' || key === 'Backspace') return event.repeat ? undefined : { type: 'remove' };
-  // Later tasks bind here: 'r' starts review (T9).
+  if (key === 'r' || key === 'R') return { type: 'review' };
   return undefined;
 }

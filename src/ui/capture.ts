@@ -41,6 +41,9 @@ export function squareClasses({ important, urgent }: Answers): Record<Quadrant, 
 export type PromptEls = {
   region: HTMLElement;
   question: HTMLElement;
+  /** Review mode only: the task being asked about, and "3 of 7". */
+  title: HTMLElement;
+  progress: HTMLElement;
   mini: HTMLElement;
   squares: Record<Quadrant, HTMLElement>;
 };
@@ -51,9 +54,13 @@ function answersOf(state: Triage): Answers {
   return state.step === 'urgent' ? { important: state.important } : {};
 }
 
+export type PromptDetail = { title: string; progress: string };
+
 /** Shows the question for `state`, or clears the prompt when `state` is undefined. */
-export function renderPrompt(els: PromptEls, state: Triage | undefined): void {
+export function renderPrompt(els: PromptEls, state: Triage | undefined, detail?: PromptDetail): void {
   els.region.dataset.active = state ? 'true' : 'false';
+  els.title.textContent = state && detail ? detail.title : '';
+  els.progress.textContent = state && detail ? detail.progress : '';
   els.question.textContent = state ? QUESTIONS[state.step] : '';
   els.mini.hidden = !state;
   if (state) paintSquares(els, squareClasses(answersOf(state)));
